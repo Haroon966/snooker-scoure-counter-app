@@ -1,70 +1,84 @@
-# 🎱 Snooker Score Counter
+# Snooker Score Counter
 
-A simple, mobile-friendly Progressive Web App (PWA) for keeping track of snooker scores.
+A mobile-friendly Progressive Web App (PWA) for keeping track of snooker scores, frames, breaks, and table math.
 
 **Live Demo**: https://haroon966.github.io/snooker-scoure-counter-app/
 
 ## Features
 
-- **Dual Player Score Tracking** - Keep track of scores for both players
-- **Break Counter** - Track the current break/run for each player
-- **Ball Point Buttons** - Quick buttons for all ball values (1-7 points + 10 ball)
-- **Foul Tracking** - Register fouls with automatic point allocation
-- **Undo Function** - Revert the last action with full state restoration
-- **Persistent Storage** - Scores automatically saved to browser storage
-- **Offline Support** - Works completely offline as a PWA
-- **Responsive Design** - Optimized for mobile and tablet devices
-- **Customizable Player Names** - Edit player names during the match
+- **Match setup wizard** — Add players → choose game → options → review → start
+- **Game modes** — 1/6/10/15-ball snooker, race to score (50–150 or custom), timed (2–7 players)
+- **Timed rules** — Countdown timer, red = 10 points, fouls 4/5/6/7/10, highest score wins
+- **Dual / multi-player scoring** — Ball-labeled buttons; 3+ players use tap-to-select + shared pad
+- **At the table** — Tap a player card to mark who is active; optional auto-switch on score
+- **Break tracking** — Current break and highest break per player
+- **Table helpers** — Reds potted (mode-dependent), points left, snookers required
+- **Foul picker** — Mode-specific penalty points (includes 10 in timed)
+- **Saved player roster** — Quick-add names from previous matches
+- **Undo**, **share**, **PWA** offline support
+
+## Development
+
+```bash
+npm install
+npm run dev      # http://localhost:5173/snooker-scoure-counter-app/
+npm test
+npm run build    # output in dist/
+npm run preview
+```
+
+## Deploy (GitHub Pages)
+
+Push to `main`/`master` — GitHub Actions runs tests, builds `dist/`, and deploys via `.github/workflows/pages.yml`.
+
+Enable **Settings → Pages → Source: GitHub Actions** on the repository.
+
+The app is served at `/snooker-scoure-counter-app/` (`vite.config.js` `base`). Bump `CACHE_NAME` in `public/sw.js` when releasing so returning users get fresh assets.
+
+## Production notes
+
+- **Persistence** — Match and profiles save to `localStorage`; quota errors show a toast and trim undo history automatically.
+- **Resume** — Leaving a match saves progress; use **Resume Match** on the home screen.
+- **Security** — Player names are escaped in the UI; photo avatars are resized before storage.
+- **CI** — `npm test` and `npm run build` run on every push (see `.github/workflows/ci.yml`).
 
 ## How to Use
 
-1. **Open the App** - Visit the [live demo](https://haroon966.github.io/snooker-scoure-counter-app/) or open `index.html` in your browser
-2. **Edit Player Names** - Click on player names to customize them
-3. **Add Points** - Click the ball buttons (+1 to +7, +10) to add points
-4. **Register Fouls** - Click the "Foul" button to add 4 points to opponent
-5. **Undo** - Use the "↩ Undo Last Action" button to revert mistakes
-6. **Reset** - Use "Reset Match" to start over
+1. **Add players** on the home screen (profiles with name and photo/emoji).
+2. **Select** at least 2 players, then **Continue**.
+3. **Choose game type** — 1/6/10/15-ball, race to score, or timed.
+4. Set **options** (target score, timer length, or best-of frames).
+5. **Review** and **Start Match**.
+6. Score during play; **Leave** (←) saves progress; **Resume Match** continues later.
 
-## Installation
+| Ball   | Points |
+|--------|--------|
+| Red    | 1      |
+| Yellow | 2      |
+| Green  | 3      |
+| Brown  | 4      |
+| Blue   | 5      |
+| Pink   | 6      |
+| Black  | 7      |
 
-### As a PWA on Mobile
+## Project Structure
 
-- **iPhone**: Open in Safari, tap Share → Add to Home Screen
-- **Android**: Open in Chrome, tap Menu → Install app
-
-### Local Development
-
-1. Clone the repository
-   ```bash
-   git clone https://github.com/Haroon966/snooker-scoure-counter-app.git
-   ```
-2. Open `index.html` in your browser
-3. Start tracking scores!
-
-## Ball Values in Snooker
-
-- Red: 1 point
-- Yellow: 2 points
-- Green: 3 points
-- Brown: 4 points
-- Blue: 5 points
-- Pink: 6 points
-- Black: 7 points
-
-## Files
-
-- `index.html` - Main application
-- `manifest.json` - PWA configuration
-- `sw.js` - Service worker for offline support
-- `README.md` - This file
+```
+src/
+  main.js           — App bootstrap and events
+  state/            — Match state and actions
+  rules/            — Snooker calculations
+  storage/          — localStorage v2 + v1 migration
+  ui/               — Render, avatars, home wizard
+styles/             — CSS tokens and layout
+public/             — manifest.json, service worker
+tests/              — Vitest unit tests
+```
 
 ## Browser Support
 
-Works on all modern browsers that support:
-- LocalStorage
-- Service Workers
-- ES6 JavaScript
+Modern browsers with ES modules, `localStorage`, and (optional) Service Workers.
 
 ## License
 
-MIT License - Feel free to use and modify!
+MIT License — feel free to use and modify!
