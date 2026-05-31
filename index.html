@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1e1e1e">
+    <title>Snooker Score</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Arial, sans-serif;
+        }
+
+        body {
+            background: #0a0a0a;
+            color: white;
+            min-height: 100vh;
+            padding: 10px;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 640px;
+            margin: 0 auto;
+            background: #1e1e1e;
+            padding: 20px;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 26px;
+        }
+
+        .players {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .player {
+            background: #2b2b2b;
+            padding: 18px;
+            border-radius: 16px;
+            text-align: center;
+        }
+
+        .player.active {
+            box-shadow: 0 0 0 4px #16a34a;
+            background: #1f3a2a;
+        }
+
+        .player-name {
+            font-size: 17px;
+            margin-bottom: 8px;
+            background: transparent;
+            border: none;
+            color: white;
+            text-align: center;
+            width: 100%;
+            font-weight: bold;
+        }
+
+        .score {
+            font-size: 58px;
+            font-weight: bold;
+            margin: 12px 0;
+            color: #e0e0e0;
+        }
+
+        .break {
+            font-size: 17px;
+            color: #4ade80;
+            margin-bottom: 12px;
+        }
+
+        .controls {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            justify-content: center;
+        }
+
+        button {
+            border: none;
+            padding: 12px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            min-width: 50px;
+            touch-action: manipulation;
+        }
+
+        button:active {
+            transform: scale(0.92);
+        }
+
+        .undo {
+            background: #64748b;
+            color: white;
+            width: 100%;
+            margin: 15px 0 10px;
+            padding: 13px;
+            font-size: 16px;
+        }
+
+        .reset {
+            background: #2563eb;
+            color: white;
+            width: 100%;
+            padding: 14px;
+            font-size: 17px;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>🎱 Snooker Score</h1>
+
+    <div class="players">
+        <div class="player active" id="player1">
+            <input type="text" class="player-name" id="name1" value="Player 1" maxlength="15">
+            <div class="score" id="score1">0</div>
+            <div class="break" id="break1">Break: 0</div>
+            <div class="controls">
+                <button style="background:#ef4444;color:white" onclick="addPoints(1,1)">+1</button>
+                <button style="background:#eab308;color:black" onclick="addPoints(1,2)">+2</button>
+                <button style="background:#22c55e;color:white" onclick="addPoints(1,3)">+3</button>
+                <button style="background:#8b5e3c;color:white" onclick="addPoints(1,4)">+4</button>
+                <button style="background:#3b82f6;color:white" onclick="addPoints(1,5)">+5</button>
+                <button style="background:#db2777;color:white" onclick="addPoints(1,6)">+6</button>
+                <button style="background:#111;color:white" onclick="addPoints(1,7)">+7</button>
+                <button style="background:#8b00ff;color:white" onclick="addPoints(1,10)">+10</button>
+                <button style="background:#b91c1c;color:white" onclick="foul(1)">Foul</button>
+            </div>
+        </div>
+
+        <div class="player" id="player2">
+            <input type="text" class="player-name" id="name2" value="Player 2" maxlength="15">
+            <div class="score" id="score2">0</div>
+            <div class="break" id="break2">Break: 0</div>
+            <div class="controls">
+                <button style="background:#ef4444;color:white" onclick="addPoints(2,1)">+1</button>
+                <button style="background:#eab308;color:black" onclick="addPoints(2,2)">+2</button>
+                <button style="background:#22c55e;color:white" onclick="addPoints(2,3)">+3</button>
+                <button style="background:#8b5e3c;color:white" onclick="addPoints(2,4)">+4</button>
+                <button style="background:#3b82f6;color:white" onclick="addPoints(2,5)">+5</button>
+                <button style="background:#db2777;color:white" onclick="addPoints(2,6)">+6</button>
+                <button style="background:#111;color:white" onclick="addPoints(2,7)">+7</button>
+                <button style="background:#8b00ff;color:white" onclick="addPoints(2,10)">+10</button>
+                <button style="background:#b91c1c;color:white" onclick="foul(2)">Foul</button>
+            </div>
+        </div>
+    </div>
+
+    <button class="undo" onclick="undoLast()">↩ Undo Last Action</button>
+    <button class="reset" onclick="resetMatch()">Reset Match</button>
+</div>
+
+<script>
+let score1 = 0, score2 = 0;
+let currentBreak1 = 0, currentBreak2 = 0;
+let activePlayer = 1;
+let history = [];
+
+// Load saved data
+function loadData() {
+    const saved = localStorage.getItem('snookerMatch');
+    if (saved) {
+        const data = JSON.parse(saved);
+        score1 = data.score1 || 0;
+        score2 = data.score2 || 0;
+        currentBreak1 = data.currentBreak1 || 0;
+        currentBreak2 = data.currentBreak2 || 0;
+        activePlayer = data.activePlayer || 1;
+        history = data.history || [];
+        
+        document.getElementById("name1").value = data.name1 || "Player 1";
+        document.getElementById("name2").value = data.name2 || "Player 2";
+    }
+    updateUI();
+}
+
+// Save all data
+function saveData() {
+    const data = {
+        score1, score2,
+        currentBreak1, currentBreak2,
+        activePlayer,
+        name1: document.getElementById("name1").value,
+        name2: document.getElementById("name2").value,
+        history
+    };
+    localStorage.setItem('snookerMatch', JSON.stringify(data));
+}
+
+function updateUI() {
+    document.getElementById("score1").innerText = score1;
+    document.getElementById("score2").innerText = score2;
+    document.getElementById("break1").innerText = `Break: ${currentBreak1}`;
+    document.getElementById("break2").innerText = `Break: ${currentBreak2}`;
+    
+    document.getElementById("player1").classList.toggle("active", activePlayer === 1);
+    document.getElementById("player2").classList.toggle("active", activePlayer === 2);
+}
+
+function saveHistory() {
+    history.push({
+        score1, score2,
+        currentBreak1, currentBreak2,
+        activePlayer
+    });
+    if (history.length > 30) history.shift();
+    saveData();
+}
+
+function addPoints(player, points) {
+    saveHistory();
+    
+    if (player === 1) {
+        score1 += points;
+        currentBreak1 += points;
+    } else {
+        score2 += points;
+        currentBreak2 += points;
+    }
+    
+    updateUI();
+    saveData();
+}
+
+function foul(player) {
+    saveHistory();
+    const foulPoints = 4;
+    
+    if (player === 1) score2 += foulPoints;
+    else score1 += foulPoints;
+    
+    if (activePlayer === 1) currentBreak1 = 0;
+    else currentBreak2 = 0;
+    
+    updateUI();
+    saveData();
+}
+
+function undoLast() {
+    if (history.length === 0) return;
+    const prev = history.pop();
+    
+    score1 = prev.score1;
+    score2 = prev.score2;
+    currentBreak1 = prev.currentBreak1;
+    currentBreak2 = prev.currentBreak2;
+    activePlayer = prev.activePlayer;
+    
+    updateUI();
+    saveData();
+}
+
+function resetMatch() {
+    if (confirm("Reset entire match?")) {
+        score1 = score2 = currentBreak1 = currentBreak2 = 0;
+        activePlayer = 1;
+        history = [];
+        updateUI();
+        saveData();
+    }
+}
+
+// Auto save player names on change
+document.getElementById("name1").addEventListener("input", saveData);
+document.getElementById("name2").addEventListener("input", saveData);
+
+// Initialize
+loadData();
+
+// PWA Installation hint (optional)
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+}
+</script>
+
+</body>
+</html>
