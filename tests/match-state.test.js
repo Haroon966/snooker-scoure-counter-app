@@ -15,6 +15,12 @@ import {
   hasResumableGame,
   resumeMatch,
   isMatchPlayable,
+  endMatchWithWinner,
+  endMatchWithTie,
+  endMatchByScore,
+  getScoreLeaderIndices,
+  getScoreLaggardIndices,
+  getMultiPlayerOutcome,
 } from '../src/state/match-state.js';
 import { migrateV1ToV2 } from '../src/storage/persist.js';
 
@@ -34,6 +40,40 @@ describe('match state', () => {
     expect(state.players[0].frameScore).toBe(15);
     expect(state.players[0].currentBreak).toBe(0);
     expect(state.players[0].highestBreak).toBe(10);
+  });
+
+  it('deducts foul points from selected player when more than two players', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    addPoints(state, 1, 10);
+    addPoints(state, 1, 10);
+    applyFoul(state, 1, 7);
+    expect(state.players[1].frameScore).toBe(13);
+    expect(state.players[0].frameScore).toBe(0);
+    expect(state.players[2].frameScore).toBe(0);
+    expect(state.players[1].currentBreak).toBe(0);
+    expect(state.players[1].highestBreak).toBe(20);
+  });
+
+  it('does not reduce score below zero on multi-player foul', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    applyFoul(state, 0, 10);
+    expect(state.players[0].frameScore).toBe(0);
   });
 
   it('undoes last action', () => {
@@ -89,7 +129,6 @@ describe('match state', () => {
   it('starts match with 4 players in timed mode', () => {
     const state = createInitialState();
     state.setup.gameModeId = 'timed';
-    state.setup.timerMinutes = 15;
     const profiles = ['A', 'B', 'C', 'D'].map((n) => ({
       id: crypto.randomUUID(),
       name: n,
@@ -99,7 +138,17 @@ describe('match state', () => {
     startMatch(state, profiles);
     expect(state.screen).toBe('game');
     expect(state.players).toHaveLength(4);
-    expect(state.game.timerDurationMs).toBe(15 * 60 * 1000);
+    expect(state.game.startedAt).toBeTruthy();
+    expect(state.game.timerDurationMs).toBeNull();
+  });
+
+  it('stores start time for frame matches', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'ball15';
+    state.setup.selectedProfileIds = ['a', 'b'];
+    state.setup.playerNames = ['P1', 'P2'];
+    startMatch(state);
+    expect(state.game.startedAt).toBeTruthy();
   });
 
   it('wins race when target reached', () => {
@@ -158,6 +207,136 @@ describe('match state', () => {
     addPoints(state, 0, 1);
     expect(state.players[0].frameScore).toBe(0);
     expect(isMatchPlayable(state)).toBe(false);
+  });
+
+  it('ends match with selected winner', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'race';
+    state.setup.targetScore = 100;
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    endMatchWithWinner(state, 1);
+    expect(state.game.status).toBe('complete');
+    expect(state.game.winnerIndices).toEqual([1]);
+  });
+
+  it('endMatchByScore picks highest scorer as winner', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'race';
+    state.setup.targetScore = 100;
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 5);
+    addPoints(state, 1, 12);
+    endMatchByScore(state);
+    expect(state.game.status).toBe('complete');
+    expect(state.game.winnerIndices).toEqual([1]);
+  });
+
+  it('endMatchByScore ends as tie when scores are equal', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 10);
+    addPoints(state, 1, 10);
+    endMatchByScore(state);
+    expect(state.game.tie).toBe(true);
+    expect(state.match.status).toBe('complete');
+  });
+
+  it('getScoreLeaderIndices returns tied leaders', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 8);
+    addPoints(state, 1, 8);
+    const { indices, isTie } = getScoreLeaderIndices(state);
+    expect(isTie).toBe(true);
+    expect(indices).toEqual([0, 1]);
+  });
+
+  it('getScoreLaggardIndices returns lowest scorers for multi-player', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    addPoints(state, 0, 10);
+    addPoints(state, 1, 10);
+    addPoints(state, 1, 10);
+    const { indices, allTied } = getScoreLaggardIndices(state);
+    expect(allTied).toBe(false);
+    expect(indices).toEqual([2]);
+  });
+
+  it('endMatchByScore marks lowest scorer as loser and others as winners', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    addPoints(state, 0, 10);
+    addPoints(state, 1, 10);
+    addPoints(state, 1, 10);
+    endMatchByScore(state);
+    expect(state.match.status).toBe('complete');
+    expect(state.game.tie).toBe(false);
+    expect(state.game.winnerIndices).toEqual([0, 1]);
+    expect(state.game.loserIndices).toEqual([2]);
+    expect(getMultiPlayerOutcome(state).loserIndices).toEqual([2]);
+  });
+
+  it('endMatchByScore treats equal scores as all losers in multi-player', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    addPoints(state, 0, 10);
+    addPoints(state, 1, 10);
+    addPoints(state, 2, 10);
+    endMatchByScore(state);
+    expect(state.game.tie).toBe(false);
+    expect(state.game.winnerIndices).toEqual([]);
+    expect(state.game.loserIndices).toEqual([0, 1, 2]);
+  });
+
+  it('ends match as tie', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    endMatchWithTie(state);
+    expect(state.game.tie).toBe(true);
+    expect(state.match.status).toBe('complete');
+  });
+
+  it('replays tournament match on tie', () => {
+    const state = createInitialState();
+    const ps = [
+      { id: 'a', name: 'A', avatar: null },
+      { id: 'b', name: 'B', avatar: null },
+      { id: 'c', name: 'C', avatar: null },
+    ];
+    state.setup.selectedProfileIds = ps.map((p) => p.id);
+    state.setup.multiPlayerFormat = 'tournament';
+    state.setup.gameModeId = 'ball15';
+    startMatch(state, ps);
+    addPoints(state, 0, 7);
+    endMatchWithTie(state);
+    expect(state.game.status).toBe('in_progress');
+    expect(state.players[0].frameScore).toBe(0);
   });
 });
 

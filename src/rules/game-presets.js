@@ -1,5 +1,4 @@
 export const RACE_TARGETS = [50, 60, 70, 100, 120, 150];
-export const TIMED_DURATIONS = [15, 30, 45, 60];
 
 export const GAME_MODES = {
   ball1: {
@@ -51,7 +50,7 @@ export const GAME_MODES = {
     label: 'Race to',
     description: 'First to reach target score',
     minPlayers: 2,
-    maxPlayers: 2,
+    maxPlayers: 7,
     maxReds: null,
     winType: 'race',
     foulPoints: [4, 5, 6, 7],
@@ -60,7 +59,7 @@ export const GAME_MODES = {
   timed: {
     id: 'timed',
     label: 'Timed',
-    description: 'Highest score when time ends — Red = 10 pts',
+    description: 'Highest score when match ends — Red = 10 pts',
     minPlayers: 2,
     maxPlayers: 7,
     maxReds: null,
@@ -84,7 +83,13 @@ export function getMaxReds(preset) {
 }
 
 export function getFoulOptions(preset) {
-  return preset.foulPoints ?? [4, 5, 6, 7];
+  if (isTimedMode(preset)) return [4, 5, 6, 7, 10];
+  return [4, 5, 6, 7];
+}
+
+export function getScoringBallValues(preset) {
+  const base = [1, 2, 3, 4, 5, 6, 7];
+  return isTimedMode(preset) ? [...base, 10] : base;
 }
 
 export function isRaceMode(preset) {
@@ -103,13 +108,35 @@ export function getModeSummary(state) {
   const preset = getPreset(state.game?.modeId ?? state.setup?.gameModeId ?? 'ball15');
   const parts = [preset.label];
 
+  const format = state.setup?.multiPlayerFormat;
+  if (format === 'tournament') parts.unshift('Tournament');
+  else if (format === 'single' && (state.setup?.selectedProfileIds?.length ?? 0) > 2) {
+    parts.unshift('All players');
+  }
+
   if (isRaceMode(preset)) {
     const target = state.game?.targetScore ?? state.setup?.targetScore ?? 100;
     parts.push(`Race to ${target}`);
   } else if (isTimedMode(preset)) {
-    const mins = state.setup?.timerMinutes ?? 30;
-    parts.push(`${mins} min`, 'Red = 10 pts');
+    parts.push('Red = 10 pts');
   }
 
   return parts.join(' · ');
+}
+
+/** Modes available for the current setup selection. */
+export function getAvailableModes(setup) {
+  const count = setup.selectedProfileIds.length;
+  return Object.values(GAME_MODES).filter((mode) => {
+    if (count <= 2) return true;
+    if (setup.multiPlayerFormat === 'tournament') return true;
+    if (setup.multiPlayerFormat === 'single') return true;
+    return false;
+  });
+}
+
+export function formatLabel(format) {
+  if (format === 'tournament') return 'Tournament';
+  if (format === 'single') return 'All in one game';
+  return '';
 }

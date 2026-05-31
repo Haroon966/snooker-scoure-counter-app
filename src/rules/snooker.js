@@ -59,6 +59,15 @@ export function snookerStatus(playerScore, opponentScore, pointsLeft) {
   return `Need ${snookers} snooker${snookers === 1 ? '' : 's'}`;
 }
 
+/**
+ * Lead-only label for two-player snooker, e.g. "Azhar has 8 pts". Returns null if not leading.
+ */
+export function formatTwoPlayerLeadStatus(name, playerScore, opponentScore) {
+  const margin = playerScore - opponentScore;
+  if (margin <= 0) return null;
+  return `${name} has ${margin} pts`;
+}
+
 /** Frames needed to win a best-of match */
 export function framesToWin(bestOf) {
   return Math.floor(bestOf / 2) + 1;

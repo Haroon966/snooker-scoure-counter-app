@@ -39,7 +39,7 @@ export function migrateV1ToV2(v1) {
       balls: { redsPotted: 0, colorsPhase: false, colorsPointsLeft: 27, maxReds: 15 },
       match: { bestOf: 1, status: 'in_progress' },
       game: { modeId: 'ball15', status: 'in_progress', winnerIndices: [] },
-      settings: { autoSwitchTurn: false },
+      settings: {},
       foulPickerOpen: false,
       foulByPlayer: null,
     }));
@@ -84,12 +84,21 @@ function mergeLoadedState(data) {
       selectedProfileIds: Array.isArray(data.setup?.selectedProfileIds)
         ? data.setup.selectedProfileIds
         : [],
-      step: Math.min(3, Math.max(0, Number(data.setup?.step) || 0)),
+      tournamentSeedOrder: Array.isArray(data.setup?.tournamentSeedOrder)
+        ? data.setup.tournamentSeedOrder
+        : [],
+      step: Math.min(4, Math.max(0, Number(data.setup?.step) || 0)),
     },
     game: {
       ...base.game,
       ...(data.game ?? {}),
-      status: ['in_progress', 'complete', 'time_up'].includes(data.game?.status)
+      startedAt:
+        Number(data.game?.startedAt) ||
+        Number(data.game?.timerStartedAt) ||
+        null,
+      status: ['in_progress', 'complete', 'time_up', 'between_matches'].includes(
+        data.game?.status
+      )
         ? data.game.status
         : 'in_progress',
     },
@@ -107,11 +116,10 @@ function mergeLoadedState(data) {
       ...(data.match ?? {}),
       status: data.match?.status === 'complete' ? 'complete' : 'in_progress',
     },
-    settings: {
-      autoSwitchTurn: Boolean(data.settings?.autoSwitchTurn),
-    },
+    settings: {},
     foulPickerOpen: false,
     foulByPlayer: null,
+    tournament: data.tournament ?? null,
   };
 }
 
@@ -128,6 +136,7 @@ function buildPayload(state) {
     match: state.match,
     history: state.history.slice(-HISTORY_CAP),
     settings: state.settings,
+    tournament: state.tournament,
   };
 }
 

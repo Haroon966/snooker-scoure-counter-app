@@ -33,10 +33,11 @@ Push to `main`/`master` — GitHub Actions runs tests, builds `dist/`, and deplo
 
 Enable **Settings → Pages → Source: GitHub Actions** on the repository.
 
-The app is served at `/snooker-scoure-counter-app/` (`vite.config.js` `base`). Bump `CACHE_NAME` in `public/sw.js` when releasing so returning users get fresh assets.
+The app is served at `/snooker-scoure-counter-app/` (`vite.config.js` `base`). The service worker cache version is set automatically at build time from `package.json` and the JS bundle hash.
 
 ## Production notes
 
+- **Offline** — Production builds precache the app shell (HTML, JS, fonts, icons). Match data lives in `localStorage` and works without a network. Test with `npm run build && npm run preview`, open the app once online, then DevTools → Network → Offline and hard-reload. `npm run dev` disables the service worker so Vite HMR is not affected.
 - **Persistence** — Match and profiles save to `localStorage`; quota errors show a toast and trim undo history automatically.
 - **Resume** — Leaving a match saves progress; use **Resume Match** on the home screen.
 - **Security** — Player names are escaped in the UI; photo avatars are resized before storage.

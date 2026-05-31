@@ -1,7 +1,86 @@
 import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
+const base = '/snooker-scoure-counter-app/';
+const baseNoSlash = base.replace(/\/$/, '');
+
+/** Redirect /snooker-scoure-counter-app → /snooker-scoure-counter-app/ in dev. */
+function redirectBasePathPlugin() {
+  return {
+    name: 'redirect-base-path',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        if (req.url === baseNoSlash) {
+          res.writeHead(301, { Location: base });
+          res.end();
+          return;
+        }
+        if (req.url === '/favicon.ico') {
+          res.writeHead(302, { Location: `${base}logo.jpg` });
+          res.end();
+          return;
+        }
+        next();
+      });
+    },
+  };
+}
+
+/** Inject precache URLs and cache version into dist/sw.js after build. */
+function injectPrecachePlugin() {
+  return {
+    name: 'inject-precache',
+    closeBundle() {
+      const distDir = resolve(__dirname, 'dist');
+      const indexPath = join(distDir, 'index.html');
+      const swTemplatePath = resolve(__dirname, 'public/sw.js');
+      const swOutPath = join(distDir, 'sw.js');
+
+      if (!existsSync(indexPath) || !existsSync(swTemplatePath)) return;
+
+      const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8'));
+      const indexHtml = readFileSync(indexPath, 'utf8');
+      const urls = new Set([
+        base,
+        `${base}index.html`,
+        `${base}manifest.json`,
+        `${base}logo.jpg`,
+      ]);
+
+      for (const match of indexHtml.matchAll(/\b(?:src|href)="([^"]+)"/g)) {
+        const href = match[1];
+        if (href.startsWith('http') || href.startsWith('//')) continue;
+        const path = href.startsWith('/') ? href : `${base}${href.replace(/^\.\//, '')}`;
+        urls.add(path);
+      }
+
+      const assetsDir = join(distDir, 'assets');
+      if (existsSync(assetsDir)) {
+        for (const file of readdirSync(assetsDir)) {
+          urls.add(`${base}assets/${file}`);
+        }
+      }
+
+      let buildHash = 'dev';
+      const jsMatch = indexHtml.match(/assets\/(index-[^."']+\.js)/);
+      if (jsMatch) buildHash = jsMatch[1].replace(/^index-/, '').replace(/\.js$/, '');
+
+      const cacheVersion = `${pkg.version}-${buildHash}`;
+      let sw = readFileSync(swTemplatePath, 'utf8');
+      sw = sw.replace('__CACHE_VERSION__', cacheVersion);
+      sw = sw.replace('__PRECACHE_URLS__', JSON.stringify([...urls].sort()));
+      writeFileSync(swOutPath, sw);
+    },
+  };
+}
 
 export default defineConfig({
-  base: '/snooker-scoure-counter-app/',
+  plugins: [react(), redirectBasePathPlugin(), injectPrecachePlugin()],
+  base,
   root: '.',
   publicDir: 'public',
   build: {

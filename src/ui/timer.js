@@ -1,12 +1,28 @@
 import { isTimedMode } from '../rules/game-presets.js';
 import { getActivePreset, endTimedMatch } from '../state/match-state.js';
 
+export function getGameStartedAt(state) {
+  return state.game?.startedAt ?? state.game?.timerStartedAt ?? null;
+}
+
 export function getRemainingMs(state) {
-  if (!state.game?.timerStartedAt || !state.game?.timerDurationMs) {
+  const startedAt = getGameStartedAt(state);
+  if (!startedAt || !state.game?.timerDurationMs) {
     return 0;
   }
-  const elapsed = Date.now() - state.game.timerStartedAt;
+  const elapsed = Date.now() - startedAt;
   return Math.max(0, state.game.timerDurationMs - elapsed);
+}
+
+export function getElapsedMs(state) {
+  const startedAt = getGameStartedAt(state);
+  if (!startedAt) return 0;
+  return Date.now() - startedAt;
+}
+
+export function getTimerDisplayMs(state) {
+  if (state.game?.timerDurationMs) return getRemainingMs(state);
+  return getElapsedMs(state);
 }
 
 export function formatTimer(ms) {
@@ -16,8 +32,17 @@ export function formatTimer(ms) {
   return `${m}:${String(s).padStart(2, '0')}`;
 }
 
+export function formatGameStartTime(timestamp) {
+  if (!timestamp) return null;
+  return new Date(timestamp).toLocaleTimeString([], {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function isTimerExpired(state) {
-  return getRemainingMs(state) <= 0 && state.game?.timerStartedAt != null;
+  if (!state.game?.timerDurationMs || !getGameStartedAt(state)) return false;
+  return getRemainingMs(state) <= 0;
 }
 
 let intervalId = null;

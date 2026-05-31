@@ -3,6 +3,7 @@ import {
   pointsLeftOnTable,
   snookersRequired,
   snookerStatus,
+  formatTwoPlayerLeadStatus,
   framesToWin,
   COLORS_TOTAL,
   RED_BLACK_MAX,
@@ -52,6 +53,18 @@ describe('snookerStatus', () => {
 
   it('describes snookers needed', () => {
     expect(snookerStatus(0, 60, 27)).toMatch(/snooker/i);
+  });
+});
+
+describe('formatTwoPlayerLeadStatus', () => {
+  it('shows lead margin for ahead player only', () => {
+    expect(formatTwoPlayerLeadStatus('Azhar', 30, 22)).toBe('Azhar has 8 pts');
+    expect(formatTwoPlayerLeadStatus('Haroon', 22, 30)).toBeNull();
+  });
+
+  it('returns null when level or trailing', () => {
+    expect(formatTwoPlayerLeadStatus('Azhar', 30, 30)).toBeNull();
+    expect(formatTwoPlayerLeadStatus('Haroon', 0, 60)).toBeNull();
   });
 });
 

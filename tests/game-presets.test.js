@@ -30,6 +30,12 @@ describe('game presets', () => {
     expect(preset.maxPlayers).toBe(7);
   });
 
+  it('non-timed modes do not have foul 10', () => {
+    for (const id of ['ball15', 'ball6', 'race']) {
+      expect(getFoulOptions(getPreset(id))).not.toContain(10);
+    }
+  });
+
   it('classifies modes', () => {
     expect(isRaceMode(getPreset('race'))).toBe(true);
     expect(isTimedMode(getPreset('timed'))).toBe(true);
