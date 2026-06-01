@@ -33,9 +33,32 @@ describe('settings', () => {
     expect(loadSettings().pricePerHour).toBe(DEFAULT_PRICE_PER_HOUR);
   });
 
+  it('defaults mobile UX preferences', () => {
+    const s = loadSettings();
+    expect(s.hapticFeedback).toBe(true);
+    expect(s.keepScreenAwake).toBe(true);
+    expect(s.longPressUndo).toBe(false);
+    expect(s.installBannerDismissed).toBe(false);
+  });
+
   it('persists price per hour without overwriting theme', () => {
     saveSettings({ themeMode: 'light', pricePerHour: 750 });
-    expect(loadSettings()).toEqual({ themeMode: 'light', pricePerHour: 750 });
+    expect(loadSettings()).toMatchObject({ themeMode: 'light', pricePerHour: 750 });
+  });
+
+  it('persists mobile UX toggles', () => {
+    saveSettings({
+      hapticFeedback: false,
+      keepScreenAwake: false,
+      longPressUndo: true,
+      installBannerDismissed: true,
+    });
+    expect(loadSettings()).toMatchObject({
+      hapticFeedback: false,
+      keepScreenAwake: false,
+      longPressUndo: true,
+      installBannerDismissed: true,
+    });
   });
 
   it('normalizes invalid price values', () => {

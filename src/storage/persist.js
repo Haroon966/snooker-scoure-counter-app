@@ -1,4 +1,10 @@
-import { createInitialState, createDefaultPlayer, HISTORY_CAP } from '../state/match-state.js';
+import {
+  createInitialState,
+  createDefaultPlayer,
+  createDefaultTeams,
+  HISTORY_CAP,
+} from '../state/match-state.js';
+import { CALL_HISTORY_CAP } from '../utils/call-history.js';
 
 const STORAGE_KEY_V2 = 'snookerMatch.v2';
 const STORAGE_KEY_V1 = 'snookerMatch';
@@ -48,18 +54,68 @@ export function migrateV1ToV2(v1) {
   return state;
 }
 
+function sanitizeCallHistory(calls) {
+  if (!Array.isArray(calls)) return [];
+  return calls
+    .slice(-CALL_HISTORY_CAP)
+    .map((c) => {
+      if (c?.type === 'foul') {
+        const points = Math.abs(Number(c.points) || 0);
+        return points > 0 ? { type: 'foul', points } : null;
+      }
+      if (c?.type === 'ball') {
+        const ball = Number(c.ball);
+        const points = Number(c.points) || 0;
+        if (!Number.isFinite(ball)) return null;
+        return { type: 'ball', ball, points };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function sanitizeMembers(members) {
+  if (!Array.isArray(members)) return undefined;
+  return members.map((m, i) => ({
+    profileId: typeof m?.profileId === 'string' ? m.profileId : null,
+    name: typeof m?.name === 'string' ? m.name : `Player ${i + 1}`,
+    avatar: typeof m?.avatar === 'string' ? m.avatar : null,
+  }));
+}
+
 function sanitizePlayers(dataPlayers) {
   if (!Array.isArray(dataPlayers) || dataPlayers.length < 2) {
     return [createDefaultPlayer('Player 1'), createDefaultPlayer('Player 2')];
   }
-  return dataPlayers.slice(0, 7).map((p, i) => ({
-    ...createDefaultPlayer(typeof p?.name === 'string' ? p.name : `Player ${i + 1}`),
-    frameScore: Number(p?.frameScore) || 0,
-    currentBreak: Number(p?.currentBreak) || 0,
-    highestBreak: Number(p?.highestBreak) || 0,
-    framesWon: Number(p?.framesWon) || 0,
-    avatar: typeof p?.avatar === 'string' ? p.avatar : null,
-  }));
+  return dataPlayers.slice(0, 7).map((p, i) => {
+    const player = {
+      ...createDefaultPlayer(typeof p?.name === 'string' ? p.name : `Player ${i + 1}`),
+      frameScore: Number(p?.frameScore) || 0,
+      currentBreak: Number(p?.currentBreak) || 0,
+      highestBreak: Number(p?.highestBreak) || 0,
+      framesWon: Number(p?.framesWon) || 0,
+      avatar: typeof p?.avatar === 'string' ? p.avatar : null,
+    };
+    const members = sanitizeMembers(p?.members);
+    if (members) player.members = members;
+    player.callHistory = sanitizeCallHistory(p?.callHistory);
+    return player;
+  });
+}
+
+function sanitizeTeams(dataTeams) {
+  const base = createDefaultTeams();
+  if (!Array.isArray(dataTeams) || dataTeams.length !== 2) return base;
+  return base.map((defaultTeam, i) => {
+    const t = dataTeams[i];
+    return {
+      id: typeof t?.id === 'string' ? t.id : defaultTeam.id,
+      name: typeof t?.name === 'string' ? t.name : defaultTeam.name,
+      profileIds: Array.isArray(t?.profileIds)
+        ? t.profileIds.filter((id) => typeof id === 'string')
+        : [],
+    };
+  });
 }
 
 function mergeLoadedState(data) {
@@ -87,11 +143,14 @@ function mergeLoadedState(data) {
       tournamentSeedOrder: Array.isArray(data.setup?.tournamentSeedOrder)
         ? data.setup.tournamentSeedOrder
         : [],
+      teamMode: Boolean(data.setup?.teamMode),
+      teams: sanitizeTeams(data.setup?.teams),
       step: Math.min(4, Math.max(0, Number(data.setup?.step) || 0)),
     },
     game: {
       ...base.game,
       ...(data.game ?? {}),
+      modeId: data.game?.modeId ?? data.setup?.gameModeId ?? base.game.modeId,
       startedAt:
         Number(data.game?.startedAt) ||
         Number(data.game?.timerStartedAt) ||

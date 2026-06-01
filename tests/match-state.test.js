@@ -6,6 +6,7 @@ import {
   undo,
   endBreak,
   awardFrame,
+  nextFrameByScore,
   newFrame,
   setActivePlayer,
   incrementRedsPotted,
@@ -18,9 +19,25 @@ import {
   endMatchWithWinner,
   endMatchWithTie,
   endMatchByScore,
+  openEndMatchPicker,
   getScoreLeaderIndices,
   getScoreLaggardIndices,
   getMultiPlayerOutcome,
+  addPlayerToGame,
+  canAddPlayerToGame,
+  canRemovePlayerFromGame,
+  showAddPlayerButton,
+  showManagePlayersButton,
+  removePlayerFromGame,
+  unlinkProfileFromMatchSetup,
+  setTeamMode,
+  assignProfileToTeam,
+  removeProfileFromTeam,
+  isTeamSetupValid,
+  initTeamsFromSetup,
+  isTeamMode,
+  wizardUsesFormatStep,
+  createDefaultSetup,
 } from '../src/state/match-state.js';
 import { migrateV1ToV2 } from '../src/storage/persist.js';
 
@@ -31,15 +48,20 @@ describe('match state', () => {
     expect(state.players[0].frameScore).toBe(7);
     expect(state.players[0].currentBreak).toBe(7);
     expect(state.players[0].highestBreak).toBe(7);
+    expect(state.players[0].callHistory).toHaveLength(1);
+    expect(state.players[0].callHistory[0]).toMatchObject({ type: 'ball', ball: 7, points: 7 });
   });
 
-  it('applies foul to opponent and clears break at table', () => {
+  it('deducts foul points from fouling player only', () => {
     const state = createInitialState();
     addPoints(state, 0, 10);
+    addPoints(state, 1, 8);
     applyFoul(state, 1, 5);
-    expect(state.players[0].frameScore).toBe(15);
-    expect(state.players[0].currentBreak).toBe(0);
-    expect(state.players[0].highestBreak).toBe(10);
+    expect(state.players[0].frameScore).toBe(10);
+    expect(state.players[0].currentBreak).toBe(10);
+    expect(state.players[1].frameScore).toBe(3);
+    expect(state.players[1].currentBreak).toBe(0);
+    expect(state.players[1].highestBreak).toBe(8);
   });
 
   it('deducts foul points from selected player when more than two players', () => {
@@ -62,7 +84,7 @@ describe('match state', () => {
     expect(state.players[1].highestBreak).toBe(20);
   });
 
-  it('does not reduce score below zero on multi-player foul', () => {
+  it('allows negative score after foul', () => {
     const state = createInitialState();
     state.setup.gameModeId = 'timed';
     const profiles = ['A', 'B', 'C'].map((n) => ({
@@ -73,7 +95,7 @@ describe('match state', () => {
     state.setup.selectedProfileIds = profiles.map((p) => p.id);
     startMatch(state, profiles);
     applyFoul(state, 0, 10);
-    expect(state.players[0].frameScore).toBe(0);
+    expect(state.players[0].frameScore).toBe(-10);
   });
 
   it('undoes last action', () => {
@@ -100,6 +122,42 @@ describe('match state', () => {
     awardFrame(state, 0);
     expect(state.players[0].framesWon).toBe(1);
     expect(state.players[0].frameScore).toBe(0);
+  });
+
+  it('awardFrame with bestOf 1 does not complete the match', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 50);
+    awardFrame(state, 0);
+    expect(state.players[0].framesWon).toBe(1);
+    expect(state.match.status).toBe('in_progress');
+    expect(state.game.status).toBe('in_progress');
+  });
+
+  it('nextFrameByScore awards frame to the leader', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 40);
+    addPoints(state, 1, 12);
+    openEndMatchPicker(state);
+    nextFrameByScore(state);
+    expect(state.players[0].framesWon).toBe(1);
+    expect(state.players[0].frameScore).toBe(0);
+    expect(state.endMatchPickerOpen).toBe(false);
+  });
+
+  it('endMatchByScore completes a frame snooker match', () => {
+    const state = createInitialState();
+    state.setup.selectedProfileIds = ['a', 'b'];
+    startMatch(state);
+    addPoints(state, 0, 5);
+    addPoints(state, 1, 12);
+    endMatchByScore(state);
+    expect(state.match.status).toBe('complete');
+    expect(state.game.winnerIndices).toEqual([1]);
+    expect(state.players[1].framesWon).toBe(0);
   });
 
   it('new frame clears scores only', () => {
@@ -337,6 +395,239 @@ describe('match state', () => {
     endMatchWithTie(state);
     expect(state.game.status).toBe('in_progress');
     expect(state.players[0].frameScore).toBe(0);
+  });
+
+  it('adds a player during a multi-player match', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    expect(canAddPlayerToGame(state)).toBe(true);
+    const result = addPlayerToGame(state, { name: 'Charlie' });
+    expect(result.ok).toBe(true);
+    expect(state.players).toHaveLength(3);
+    expect(state.players[2].name).toBe('Charlie');
+    expect(state.players[2].frameScore).toBe(0);
+  });
+
+  it('rejects duplicate names when adding mid-match', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    const result = addPlayerToGame(state, { name: 'A' });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('duplicate');
+  });
+
+  it('removes a player from an in-progress match', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    expect(canRemovePlayerFromGame(state)).toBe(true);
+    const result = removePlayerFromGame(state, 2);
+    expect(result.ok).toBe(true);
+    expect(state.players).toHaveLength(2);
+    expect(state.players.map((p) => p.name)).toEqual(['A', 'B']);
+    unlinkProfileFromMatchSetup(state, profiles[2].id);
+    expect(state.setup.selectedProfileIds).toHaveLength(2);
+  });
+
+  it('cannot remove below two players', () => {
+    const state = createInitialState();
+    startMatch(state, []);
+    expect(canRemovePlayerFromGame(state)).toBe(false);
+    expect(removePlayerFromGame(state, 0).reason).toBe('not_allowed');
+  });
+
+  it('allows adding players in two-player snooker modes', () => {
+    const state = createInitialState();
+    startMatch(state, []);
+    expect(canAddPlayerToGame(state)).toBe(true);
+    const result = addPlayerToGame(state, { name: 'Extra' });
+    expect(result.ok).toBe(true);
+    expect(state.players).toHaveLength(3);
+  });
+
+  it('shows add button in timed mode with two players', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    state.screen = 'game';
+    expect(showAddPlayerButton(state)).toBe(true);
+    expect(canAddPlayerToGame(state)).toBe(true);
+  });
+
+  it('shows add button in frame snooker with two players', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'ball15';
+    state.screen = 'game';
+    state.game.status = 'in_progress';
+    state.players = [
+      { name: 'A', frameScore: 0, currentBreak: 0, highestBreak: 0, framesWon: 0, avatar: null },
+      { name: 'B', frameScore: 0, currentBreak: 0, highestBreak: 0, framesWon: 0, avatar: null },
+    ];
+    expect(showAddPlayerButton(state)).toBe(true);
+  });
+
+  it('still allows adding after match grows past two players', () => {
+    const state = createInitialState();
+    state.setup.gameModeId = 'timed';
+    const profiles = ['A', 'B', 'C'].map((n) => ({
+      id: crypto.randomUUID(),
+      name: n,
+      avatar: null,
+    }));
+    state.setup.selectedProfileIds = profiles.map((p) => p.id);
+    startMatch(state, profiles);
+    expect(canAddPlayerToGame(state)).toBe(true);
+    state.game.modeId = 'ball15';
+    expect(canAddPlayerToGame(state)).toBe(true);
+    addPlayerToGame(state, { name: 'D' });
+    addPlayerToGame(state, { name: 'E' });
+    addPlayerToGame(state, { name: 'F' });
+    addPlayerToGame(state, { name: 'G' });
+    expect(canAddPlayerToGame(state)).toBe(false);
+  });
+});
+
+describe('team mode', () => {
+  const profiles = [
+    { id: 'p1', name: 'Alice', avatar: null },
+    { id: 'p2', name: 'Bob', avatar: null },
+    { id: 'p3', name: 'Carol', avatar: null },
+    { id: 'p4', name: 'Dave', avatar: null },
+  ];
+
+  it('setTeamMode splits selected profiles across two teams', () => {
+    const setup = createDefaultSetup();
+    setup.selectedProfileIds = ['p1', 'p2', 'p3', 'p4'];
+    setTeamMode(setup, true);
+    expect(setup.teamMode).toBe(true);
+    expect(setup.teams[0].profileIds).toEqual(['p1', 'p3']);
+    expect(setup.teams[1].profileIds).toEqual(['p2', 'p4']);
+    expect(isTeamSetupValid(setup)).toBe(true);
+  });
+
+  it('isTeamSetupValid fails when a team is empty', () => {
+    const setup = createDefaultSetup();
+    setup.teamMode = true;
+    setup.selectedProfileIds = ['p1', 'p2'];
+    setup.teams[0].profileIds = ['p1', 'p2'];
+    setup.teams[1].profileIds = [];
+    expect(isTeamSetupValid(setup)).toBe(false);
+  });
+
+  it('assignProfileToTeam moves profile between teams', () => {
+    const setup = createDefaultSetup();
+    setup.teamMode = true;
+    setup.selectedProfileIds = ['p1', 'p2'];
+    setup.teams[0].profileIds = ['p1'];
+    setup.teams[1].profileIds = ['p2'];
+    assignProfileToTeam(setup, 'p1', 1);
+    expect(setup.teams[0].profileIds).toEqual([]);
+    expect(setup.teams[1].profileIds).toEqual(['p2', 'p1']);
+  });
+
+  it('assignProfileToTeam adds unassigned player to selected team', () => {
+    const setup = createDefaultSetup();
+    setup.teamMode = true;
+    assignProfileToTeam(setup, 'p1', 0);
+    assignProfileToTeam(setup, 'p2', 1);
+    expect(setup.selectedProfileIds).toEqual(['p1', 'p2']);
+    expect(setup.teams[0].profileIds).toEqual(['p1']);
+    expect(setup.teams[1].profileIds).toEqual(['p2']);
+  });
+
+  it('removeProfileFromTeam removes player from roster', () => {
+    const setup = createDefaultSetup();
+    setup.teamMode = true;
+    setup.selectedProfileIds = ['p1', 'p2'];
+    setup.teams[0].profileIds = ['p1'];
+    setup.teams[1].profileIds = ['p2'];
+    removeProfileFromTeam(setup, 'p1');
+    expect(setup.selectedProfileIds).toEqual(['p2']);
+    expect(setup.teams[0].profileIds).toEqual([]);
+  });
+
+  it('initTeamsFromSetup creates two team scorers with members', () => {
+    const state = createInitialState();
+    state.setup.teamMode = true;
+    state.setup.selectedProfileIds = ['p1', 'p2', 'p3'];
+    state.setup.teams[0].profileIds = ['p1', 'p3'];
+    state.setup.teams[1].profileIds = ['p2'];
+    state.setup.teams[0].name = 'Reds';
+    state.setup.teams[1].name = 'Blues';
+    initTeamsFromSetup(state, profiles);
+    expect(state.players).toHaveLength(2);
+    expect(state.players[0].name).toBe('Reds');
+    expect(state.players[1].name).toBe('Blues');
+    expect(state.players[0].members).toHaveLength(2);
+    expect(state.players[1].members).toHaveLength(1);
+    expect(isTeamMode(state)).toBe(true);
+  });
+
+  it('startMatch in team mode scores teams not individuals', () => {
+    const state = createInitialState();
+    state.setup.teamMode = true;
+    state.setup.gameModeId = 'ball15';
+    state.setup.selectedProfileIds = ['p1', 'p2', 'p3'];
+    state.setup.teams[0].profileIds = ['p1', 'p3'];
+    state.setup.teams[1].profileIds = ['p2'];
+    startMatch(state, profiles);
+    expect(isTeamMode(state)).toBe(true);
+    addPoints(state, 0, 7);
+    expect(state.players[0].frameScore).toBe(7);
+    expect(state.players[1].frameScore).toBe(0);
+  });
+
+  it('wizardUsesFormatStep is false in team mode with 3+ players', () => {
+    const setup = createDefaultSetup();
+    setup.teamMode = true;
+    setup.selectedProfileIds = ['p1', 'p2', 'p3'];
+    setup.teams[0].profileIds = ['p1'];
+    setup.teams[1].profileIds = ['p2', 'p3'];
+    expect(wizardUsesFormatStep(setup)).toBe(false);
+  });
+
+  it('addPlayerToGame in team mode adds to team roster only', () => {
+    const state = createInitialState();
+    state.setup.teamMode = true;
+    state.setup.gameModeId = 'timed';
+    state.setup.selectedProfileIds = ['p1', 'p2'];
+    state.setup.teams[0].profileIds = ['p1'];
+    state.setup.teams[1].profileIds = ['p2'];
+    startMatch(state, profiles);
+    const result = addPlayerToGame(state, {
+      name: 'Eve',
+      profileId: 'p-new',
+      teamIndex: 0,
+    });
+    expect(result.ok).toBe(true);
+    expect(state.players).toHaveLength(2);
+    expect(state.players[0].members).toHaveLength(2);
   });
 });
 

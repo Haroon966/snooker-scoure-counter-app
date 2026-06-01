@@ -5,14 +5,22 @@ import {
   getMaxReds,
   isRaceMode,
   isTimedMode,
+  isFrameMatchMode,
 } from '../rules/game-presets.js';
 import {
   createInitialMatches,
   maybeBuildNextRound,
   findNextPlayableMatch,
 } from '../rules/tournament.js';
+import {
+  createCallEntry,
+  pushPlayerCall,
+  clearPlayerCallHistory,
+} from '../utils/call-history.js';
 
 export const HISTORY_CAP = 50;
+export const MAX_PLAYERS = 7;
+export const MIN_PLAYERS_IN_GAME = 2;
 
 export function createDefaultPlayer(name, avatar = null) {
   return {
@@ -22,7 +30,15 @@ export function createDefaultPlayer(name, avatar = null) {
     currentBreak: 0,
     highestBreak: 0,
     framesWon: 0,
+    callHistory: [],
   };
+}
+
+export function createDefaultTeams() {
+  return [
+    { id: 'team-a', name: 'Team A', profileIds: [] },
+    { id: 'team-b', name: 'Team B', profileIds: [] },
+  ];
 }
 
 export function createDefaultSetup() {
@@ -32,6 +48,8 @@ export function createDefaultSetup() {
     selectedProfileIds: [],
     playerNames: [],
     multiPlayerFormat: null,
+    teamMode: false,
+    teams: createDefaultTeams(),
     targetScore: 100,
     customTarget: null,
     timerMinutes: 30,
@@ -72,7 +90,12 @@ export function createInitialState() {
 }
 
 export function getActivePreset(state) {
-  return getPreset(state.game?.modeId ?? state.setup?.gameModeId ?? 'ball15');
+  const gameId = state.game?.modeId;
+  const setupId = state.setup?.gameModeId;
+  if (setupId && gameId === 'ball15' && setupId !== 'ball15') {
+    return getPreset(setupId);
+  }
+  return getPreset(gameId ?? setupId ?? 'ball15');
 }
 
 export function isMultiPlayerSingleGame(state) {
@@ -94,7 +117,10 @@ export function getMaxRedsForState(state) {
 /** Deep clone state for history (omit avatars to save storage) */
 export function snapshot(state) {
   return {
-    players: state.players.map(({ avatar, ...p }) => ({ ...p })),
+    players: state.players.map(({ avatar, callHistory, ...p }) => ({
+      ...p,
+      callHistory: Array.isArray(callHistory) ? callHistory.map((c) => ({ ...c })) : [],
+    })),
     activePlayer: state.activePlayer,
     balls: { ...state.balls },
     match: { ...state.match },
@@ -115,6 +141,7 @@ export function restoreSnapshot(state, snap) {
   state.players = snap.players.map((p, i) => ({
     ...p,
     avatar: state.players[i]?.avatar ?? null,
+    members: p.members ?? state.players[i]?.members ?? undefined,
   }));
   state.activePlayer = snap.activePlayer;
   state.balls = { ...snap.balls };
@@ -138,11 +165,150 @@ export function setSetupStep(state, step) {
   state.setup.step = step;
 }
 
+function ensureTeams(setup) {
+  if (!Array.isArray(setup.teams) || setup.teams.length !== 2) {
+    setup.teams = createDefaultTeams();
+  }
+}
+
+function removeProfileFromTeams(setup, profileId) {
+  ensureTeams(setup);
+  for (const team of setup.teams) {
+    const idx = team.profileIds.indexOf(profileId);
+    if (idx >= 0) team.profileIds.splice(idx, 1);
+  }
+}
+
+function splitProfilesAcrossTeams(setup) {
+  ensureTeams(setup);
+  setup.teams[0].profileIds = [];
+  setup.teams[1].profileIds = [];
+  setup.selectedProfileIds.forEach((id, i) => {
+    setup.teams[i % 2].profileIds.push(id);
+  });
+}
+
+export function getTeamForProfile(setup, profileId) {
+  ensureTeams(setup);
+  const idx = setup.teams.findIndex((t) => t.profileIds.includes(profileId));
+  return idx >= 0 ? idx : null;
+}
+
+export function getAssignedProfileIds(setup) {
+  ensureTeams(setup);
+  return setup.teams.flatMap((t) => t.profileIds);
+}
+
+export function isTeamSetupValid(setup) {
+  if (!setup.teamMode) return true;
+  ensureTeams(setup);
+  const assigned = getAssignedProfileIds(setup);
+  const selected = setup.selectedProfileIds;
+  if (selected.length < 2) return false;
+  if (setup.teams.some((t) => t.profileIds.length < 1)) return false;
+  if (assigned.length !== selected.length) return false;
+  return selected.every((id) => assigned.includes(id));
+}
+
+export function setTeamMode(setup, enabled) {
+  setup.teamMode = Boolean(enabled);
+  ensureTeams(setup);
+  if (setup.teamMode) {
+    setup.multiPlayerFormat = null;
+    setup.tournamentSeedOrder = [];
+    splitProfilesAcrossTeams(setup);
+  } else {
+    for (const team of setup.teams) {
+      team.profileIds = [];
+    }
+  }
+}
+
+export function assignProfileToTeam(setup, profileId, teamIndex) {
+  if (!setup.teamMode) return;
+  ensureTeams(setup);
+  if (teamIndex < 0 || teamIndex > 1) return;
+
+  const alreadyOnTeam = getTeamForProfile(setup, profileId) === teamIndex;
+  if (alreadyOnTeam) return;
+
+  const isNew = !setup.selectedProfileIds.includes(profileId);
+  if (isNew && setup.selectedProfileIds.length >= MAX_PLAYERS) return;
+
+  removeProfileFromTeams(setup, profileId);
+  setup.teams[teamIndex].profileIds.push(profileId);
+  if (isNew) {
+    setup.selectedProfileIds.push(profileId);
+  }
+  if (setup.selectedProfileIds.length <= 2) {
+    setup.multiPlayerFormat = null;
+  }
+  syncPlayerNamesFromSelection(setup);
+}
+
+export function removeProfileFromTeam(setup, profileId) {
+  if (!setup.teamMode) return;
+  removeProfileFromTeams(setup, profileId);
+  const i = setup.selectedProfileIds.indexOf(profileId);
+  if (i >= 0) setup.selectedProfileIds.splice(i, 1);
+  if (setup.selectedProfileIds.length <= 2) {
+    setup.multiPlayerFormat = null;
+  }
+  syncPlayerNamesFromSelection(setup);
+}
+
+export function cycleProfileTeamAssignment(setup, profileId) {
+  if (!setup.teamMode) return;
+  ensureTeams(setup);
+  const inSelected = setup.selectedProfileIds.includes(profileId);
+  const teamIdx = getTeamForProfile(setup, profileId);
+
+  if (!inSelected) {
+    if (setup.selectedProfileIds.length >= MAX_PLAYERS) return;
+    setup.selectedProfileIds.push(profileId);
+    setup.teams[0].profileIds.push(profileId);
+  } else if (teamIdx === 0) {
+    removeProfileFromTeams(setup, profileId);
+    setup.teams[1].profileIds.push(profileId);
+  } else if (teamIdx === 1) {
+    removeProfileFromTeams(setup, profileId);
+    const i = setup.selectedProfileIds.indexOf(profileId);
+    if (i >= 0) setup.selectedProfileIds.splice(i, 1);
+  }
+
+  if (setup.selectedProfileIds.length <= 2) {
+    setup.multiPlayerFormat = null;
+  }
+  syncPlayerNamesFromSelection(setup);
+}
+
+export function renameTeam(setup, teamIndex, name) {
+  ensureTeams(setup);
+  if (teamIndex < 0 || teamIndex > 1) return;
+  const trimmed = (name || '').trim();
+  if (trimmed) setup.teams[teamIndex].name = trimmed;
+}
+
+export function isTeamMode(state) {
+  return Boolean(
+    state.setup?.teamMode &&
+      state.players.length === 2 &&
+      state.players.every((p) => Array.isArray(p.members))
+  );
+}
+
+export function getTotalTeamMembers(state) {
+  if (!isTeamMode(state)) return state.players.length;
+  return state.players.reduce((n, p) => n + (p.members?.length ?? 0), 0);
+}
+
 export function toggleProfileSelection(setup, profileId) {
+  if (setup.teamMode) return;
   const i = setup.selectedProfileIds.indexOf(profileId);
   if (i >= 0) {
     setup.selectedProfileIds.splice(i, 1);
-  } else if (setup.selectedProfileIds.length < 7) {
+    removeProfileFromTeams(setup, profileId);
+  } else if (setup.selectedProfileIds.length < MAX_PLAYERS) {
     setup.selectedProfileIds.push(profileId);
   }
   if (setup.selectedProfileIds.length <= 2) {
@@ -157,10 +323,70 @@ export function syncPlayerNamesFromSelection(setup, profiles = []) {
     .filter(Boolean);
 }
 
+function applyProfileIdentity(player, profile) {
+  if (!profile) return player;
+  return {
+    ...player,
+    name: profile.name,
+    avatar: profile.avatar ?? null,
+  };
+}
+
+function buildTeamMember(profileId, profiles) {
+  const profile = profiles.find((p) => p.id === profileId);
+  return {
+    profileId,
+    name: profile?.name ?? 'Player',
+    avatar: profile?.avatar ?? null,
+  };
+}
+
+/** Refresh in-match player names/avatars after profile edit (preserves scores). */
+export function syncPlayersFromProfiles(state, profiles = []) {
+  const ids = state.setup.selectedProfileIds;
+  if (ids.length < 2) return;
+
+  if (isTeamMode(state)) {
+    ensureTeams(state.setup);
+    state.players.forEach((teamPlayer, ti) => {
+      const team = state.setup.teams[ti];
+      if (!team) return;
+      teamPlayer.name = team.name;
+      teamPlayer.members = team.profileIds.map((id) => buildTeamMember(id, profiles));
+    });
+    return;
+  }
+
+  if (state.players.length === ids.length) {
+    state.players = ids.map((id, i) =>
+      applyProfileIdentity(state.players[i], profiles.find((p) => p.id === id))
+    );
+    return;
+  }
+
+  if (ids.length < state.players.length) {
+    return;
+  }
+
+  if (!state.tournament?.roster?.length) return;
+
+  const order =
+    state.setup.multiPlayerFormat === 'tournament' &&
+    state.setup.tournamentSeedOrder?.length
+      ? state.setup.tournamentSeedOrder.filter((id) => ids.includes(id))
+      : ids;
+
+  if (state.tournament.roster.length === order.length) {
+    state.tournament.roster = order.map((id, i) =>
+      applyProfileIdentity(state.tournament.roster[i], profiles.find((p) => p.id === id))
+    );
+  }
+}
+
 export function addPlayerToSetup(setup, name) {
   const trimmed = (name || '').trim();
   if (!trimmed) return false;
-  if (setup.playerNames.length >= 7) return false;
+  if (setup.playerNames.length >= MAX_PLAYERS) return false;
   if (setup.playerNames.some((n) => n.toLowerCase() === trimmed.toLowerCase())) {
     return false;
   }
@@ -173,6 +399,7 @@ export function removePlayerFromSetup(setup, index) {
 }
 
 export function clampPlayersForMode(setup) {
+  if (setup.teamMode) return;
   if (setup.selectedProfileIds.length <= 2) return;
   if (setup.multiPlayerFormat === 'tournament') return;
 
@@ -219,6 +446,7 @@ export function swapTournamentSeeds(setup, indexA, indexB) {
 }
 
 export function needsFormatStep(setup) {
+  if (setup.teamMode) return false;
   return setup.selectedProfileIds.length > 2;
 }
 
@@ -242,8 +470,20 @@ export function wizardReviewStep(setup) {
   return wizardUsesFormatStep(setup) ? 4 : 3;
 }
 
+export function needsTournamentBracketStep(setup) {
+  const preset = getPreset(setup.gameModeId);
+  return (
+    setup.multiPlayerFormat === 'tournament' &&
+    setup.selectedProfileIds.length > 2 &&
+    preset?.maxReds != null
+  );
+}
+
 export function wizardSkipsOptionsStep(setup) {
-  return isTimedMode(getPreset(setup.gameModeId));
+  const preset = getPreset(setup.gameModeId);
+  if (isTimedMode(preset)) return true;
+  if (isRaceMode(preset)) return false;
+  return !needsTournamentBracketStep(setup);
 }
 
 export function wizardStepLabels(setup) {
@@ -266,7 +506,7 @@ export function canAdvanceFromStep(setup) {
 
   switch (setup.step) {
     case 0:
-      return setup.selectedProfileIds.length >= 2;
+      return setup.selectedProfileIds.length >= 2 && isTeamSetupValid(setup);
     case 1:
       if (wizardUsesFormatStep(setup)) return !!setup.multiPlayerFormat;
       return !!setup.gameModeId;
@@ -301,6 +541,15 @@ export function initPlayersFromSetup(state, profiles = []) {
   state.activePlayer = 0;
 }
 
+export function initTeamsFromSetup(state, profiles = []) {
+  ensureTeams(state.setup);
+  state.players = state.setup.teams.map((team) => ({
+    ...createDefaultPlayer(team.name, null),
+    members: team.profileIds.map((id) => buildTeamMember(id, profiles)),
+  }));
+  state.activePlayer = 0;
+}
+
 function captureFinalPlayers(state) {
   state.game.finalPlayers = state.players.map((p) => ({
     name: p.name,
@@ -308,6 +557,13 @@ function captureFinalPlayers(state) {
     framesWon: p.framesWon ?? 0,
     highestBreak: p.highestBreak ?? 0,
     avatar: p.avatar ?? null,
+    members: p.members
+      ? p.members.map((m) => ({
+          name: m.name,
+          avatar: m.avatar ?? null,
+          profileId: m.profileId ?? null,
+        }))
+      : undefined,
   }));
 }
 
@@ -370,6 +626,7 @@ function loadTournamentMatchPlayers(state, match) {
     p.currentBreak = 0;
     p.highestBreak = 0;
     p.framesWon = 0;
+    clearPlayerCallHistory(p);
   }
 }
 
@@ -429,6 +686,7 @@ export function startMatch(state, profiles = []) {
   state.endMatchPickerOpen = false;
 
   const isTournament =
+    !state.setup.teamMode &&
     state.setup.selectedProfileIds.length > 2 &&
     state.setup.multiPlayerFormat === 'tournament';
 
@@ -437,7 +695,11 @@ export function startMatch(state, profiles = []) {
     resolveByesAndLoadMatch(state, preset);
   } else {
     state.tournament = null;
-    initPlayersFromSetup(state, profiles);
+    if (state.setup.teamMode) {
+      initTeamsFromSetup(state, profiles);
+    } else {
+      initPlayersFromSetup(state, profiles);
+    }
     resetBallsForPreset(state, preset);
     resetGameForPreset(state, preset);
   }
@@ -550,6 +812,164 @@ export function setActivePlayer(state, index) {
   state.activePlayer = index;
 }
 
+export function getMaxPlayersForState(state) {
+  return MAX_PLAYERS;
+}
+
+/** Show manage-players control during any live match. */
+export function showManagePlayersButton(state) {
+  if (state.screen !== 'game') return false;
+  return state.game?.status === 'in_progress';
+}
+
+/** @deprecated use showManagePlayersButton */
+export function showAddPlayerButton(state) {
+  return showManagePlayersButton(state);
+}
+
+export function canRemovePlayerFromGame(state) {
+  if (!showManagePlayersButton(state)) return false;
+  if (isTeamMode(state)) {
+    return getTotalTeamMembers(state) > MIN_PLAYERS_IN_GAME;
+  }
+  return state.players.length > MIN_PLAYERS_IN_GAME;
+}
+
+export function canRemoveTeamMember(state, teamIndex) {
+  if (!isTeamMode(state)) return canRemovePlayerFromGame(state);
+  const team = state.players[teamIndex];
+  return Boolean(team?.members?.length > 1);
+}
+
+export function isProfileInMatch(state, profile) {
+  if (!profile?.id) return false;
+  if (state.setup.selectedProfileIds.includes(profile.id)) return true;
+  if (isTeamMode(state)) {
+    return state.players.some((p) =>
+      p.members?.some((m) => m.profileId === profile.id)
+    );
+  }
+  const name = (profile.name || '').trim().toLowerCase();
+  return state.players.some((p) => (p.name || '').trim().toLowerCase() === name);
+}
+
+export function canAddPlayerToGame(state) {
+  if (!showManagePlayersButton(state)) return false;
+  if (isTeamMode(state)) {
+    return getTotalTeamMembers(state) < MAX_PLAYERS;
+  }
+  return state.players.length < MAX_PLAYERS;
+}
+
+export function addPlayerToGame(state, { name, avatar = null, profileId = null, teamIndex = 0 }) {
+  if (!canAddPlayerToGame(state)) return { ok: false, reason: 'not_allowed' };
+  const trimmed = (name || '').trim();
+  if (!trimmed) return { ok: false, reason: 'empty' };
+
+  if (isTeamMode(state)) {
+    const ti = teamIndex === 1 ? 1 : 0;
+    const team = state.players[ti];
+    if (!team?.members) return { ok: false, reason: 'not_allowed' };
+    if (
+      team.members.some(
+        (m) => (m.name || '').trim().toLowerCase() === trimmed.toLowerCase()
+      )
+    ) {
+      return { ok: false, reason: 'duplicate' };
+    }
+    if (profileId) {
+      const inMatch = state.players.some((p) =>
+        p.members?.some((m) => m.profileId === profileId)
+      );
+      if (inMatch) return { ok: false, reason: 'duplicate' };
+    }
+
+    pushHistory(state);
+    const member = {
+      profileId: profileId ?? null,
+      name: trimmed,
+      avatar: avatar ?? null,
+    };
+    team.members.push(member);
+    ensureTeams(state.setup);
+    if (profileId && !state.setup.teams[ti].profileIds.includes(profileId)) {
+      state.setup.teams[ti].profileIds.push(profileId);
+    }
+    if (profileId && !state.setup.selectedProfileIds.includes(profileId)) {
+      state.setup.selectedProfileIds.push(profileId);
+    }
+    return { ok: true, index: ti, memberIndex: team.members.length - 1 };
+  }
+
+  if (
+    state.players.some((p) => (p.name || '').trim().toLowerCase() === trimmed.toLowerCase())
+  ) {
+    return { ok: false, reason: 'duplicate' };
+  }
+
+  pushHistory(state);
+  state.players.push(createDefaultPlayer(trimmed, avatar));
+  const index = state.players.length - 1;
+
+  if (profileId && !state.setup.selectedProfileIds.includes(profileId)) {
+    state.setup.selectedProfileIds.push(profileId);
+  }
+
+  return { ok: true, index };
+}
+
+function adjustIndexAfterRemoval(removedIndex, current) {
+  if (current == null || current < 0) return current;
+  if (current === removedIndex) return Math.max(0, removedIndex - 1);
+  if (current > removedIndex) return current - 1;
+  return current;
+}
+
+export function removePlayerFromGame(state, playerIndex, memberIndex = null) {
+  if (isTeamMode(state) && memberIndex != null) {
+    return removeTeamMemberFromGame(state, playerIndex, memberIndex);
+  }
+  if (!canRemovePlayerFromGame(state)) return { ok: false, reason: 'not_allowed' };
+  if (playerIndex < 0 || playerIndex >= state.players.length) {
+    return { ok: false, reason: 'invalid' };
+  }
+
+  pushHistory(state);
+  const [removed] = state.players.splice(playerIndex, 1);
+  state.activePlayer = adjustIndexAfterRemoval(playerIndex, state.activePlayer);
+  state.foulByPlayer = adjustIndexAfterRemoval(playerIndex, state.foulByPlayer);
+
+  return { ok: true, name: removed.name };
+}
+
+export function removeTeamMemberFromGame(state, teamIndex, memberIndex) {
+  if (!canRemoveTeamMember(state, teamIndex)) return { ok: false, reason: 'not_allowed' };
+  const team = state.players[teamIndex];
+  if (!team?.members || memberIndex < 0 || memberIndex >= team.members.length) {
+    return { ok: false, reason: 'invalid' };
+  }
+
+  pushHistory(state);
+  const [removed] = team.members.splice(memberIndex, 1);
+  ensureTeams(state.setup);
+  if (removed.profileId) {
+    state.setup.teams[teamIndex].profileIds = state.setup.teams[teamIndex].profileIds.filter(
+      (id) => id !== removed.profileId
+    );
+    state.setup.selectedProfileIds = state.setup.selectedProfileIds.filter(
+      (id) => id !== removed.profileId
+    );
+  }
+
+  return { ok: true, name: removed.name, profileId: removed.profileId ?? null };
+}
+
+export function unlinkProfileFromMatchSetup(state, profileId) {
+  if (!profileId) return;
+  state.setup.selectedProfileIds = state.setup.selectedProfileIds.filter((id) => id !== profileId);
+  removeProfileFromTeams(state.setup, profileId);
+}
+
 export function addPoints(state, playerIndex, ballValue) {
   if (!isMatchPlayable(state)) return;
   const preset = getActivePreset(state);
@@ -560,34 +980,20 @@ export function addPoints(state, playerIndex, ballValue) {
   player.frameScore += points;
   player.currentBreak += points;
   updateHighestBreak(player);
+  pushPlayerCall(player, createCallEntry('ball', { ballValue, points }));
 
   checkWinCondition(state);
-}
-
-function foulBeneficiary(state, foulingIndex) {
-  const n = state.players.length;
-  if (n === 2) return foulingIndex === 0 ? 1 : 0;
-  if (state.activePlayer !== foulingIndex) return state.activePlayer;
-  return (foulingIndex + 1) % n;
 }
 
 export function applyFoul(state, foulingPlayerIndex, foulPoints) {
   if (!isMatchPlayable(state)) return;
   pushHistory(state);
 
-  if (state.players.length > 2) {
-    const fouler = state.players[foulingPlayerIndex];
-    fouler.frameScore = Math.max(0, fouler.frameScore - foulPoints);
-    updateHighestBreak(fouler);
-    fouler.currentBreak = 0;
-  } else {
-    const beneficiary = foulBeneficiary(state, foulingPlayerIndex);
-    state.players[beneficiary].frameScore += foulPoints;
-
-    const atTable = state.players[state.activePlayer];
-    updateHighestBreak(atTable);
-    atTable.currentBreak = 0;
-  }
+  const fouler = state.players[foulingPlayerIndex];
+  fouler.frameScore -= foulPoints;
+  updateHighestBreak(fouler);
+  fouler.currentBreak = 0;
+  pushPlayerCall(fouler, createCallEntry('foul', { points: foulPoints }));
 
   state.foulPickerOpen = false;
   state.foulByPlayer = null;
@@ -688,18 +1094,26 @@ export function endMatchWithWinner(state, winnerIndex) {
     return;
   }
 
-  if (isRaceMode(preset) || isTimedMode(preset)) {
-    pushHistory(state);
-    captureFinalPlayers(state);
-    state.game.winnerIndices = [winnerIndex];
-    state.game.loserIndices = [];
-    state.game.tie = false;
-    state.game.status = isTimedMode(preset) ? 'time_up' : 'complete';
-    state.match.status = 'complete';
-    return;
-  }
+  pushHistory(state);
+  captureFinalPlayers(state);
+  state.game.winnerIndices = [winnerIndex];
+  state.game.loserIndices = [];
+  state.game.tie = false;
+  state.game.status = isTimedMode(preset) ? 'time_up' : 'complete';
+  state.match.status = 'complete';
+}
 
-  awardFrame(state, winnerIndex);
+/** Award current frame to the score leader and start the next frame. */
+export function nextFrameByScore(state) {
+  if (!isMatchPlayable(state)) return;
+  const preset = getActivePreset(state);
+  if (!isFrameMatchMode(preset) || state.players.length !== 2 || state.tournament) return;
+
+  const { indices, isTie } = getScoreLeaderIndices(state);
+  if (isTie) return;
+
+  closeEndMatchPicker(state);
+  awardFrame(state, indices[0]);
 }
 
 export function endMatchWithTie(state) {
@@ -790,6 +1204,7 @@ export function newFrame(state) {
   for (const player of state.players) {
     player.frameScore = 0;
     player.currentBreak = 0;
+    clearPlayerCallHistory(player);
   }
   state.balls = {
     redsPotted: 0,
@@ -808,7 +1223,7 @@ export function awardFrame(state, winnerIndex) {
   pushHistory(state);
   state.players[winnerIndex].framesWon += 1;
   const needed = framesToWin(state.match.bestOf);
-  if (state.players[winnerIndex].framesWon >= needed) {
+  if (state.match.bestOf > 1 && state.players[winnerIndex].framesWon >= needed) {
     if (state.tournament) {
       finishTournamentMatch(state, winnerIndex);
       return;
@@ -823,6 +1238,7 @@ export function awardFrame(state, winnerIndex) {
   for (const player of state.players) {
     player.frameScore = 0;
     player.currentBreak = 0;
+    clearPlayerCallHistory(player);
   }
   state.balls = {
     redsPotted: 0,

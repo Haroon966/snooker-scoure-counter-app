@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useRef, useState } from 'react';
+import { useCallback, useMemo, useReducer, useRef, useState } from 'react';
 import { loadState, saveState } from '../storage/persist.js';
 import { loadProfiles } from '../storage/profiles.js';
 import { tryRecordMatchHistory } from '../rules/matchHistory.js';
@@ -13,7 +13,7 @@ function initState() {
 
 export function useMatchApp({ pricePerHour = 500, onHistoryChange } = {}) {
   const stateRef = useRef(initState());
-  const [, tick] = useReducer((n) => n + 1, 0);
+  const [revision, tick] = useReducer((n) => n + 1, 0);
   const [toast, setToast] = useState('');
   const [profilesVersion, setProfilesVersion] = useState(0);
 
@@ -21,7 +21,7 @@ export function useMatchApp({ pricePerHour = 500, onHistoryChange } = {}) {
     setProfilesVersion((v) => v + 1);
   }, []);
 
-  const profiles = loadProfiles();
+  const profiles = useMemo(() => loadProfiles(), [profilesVersion]);
 
   const showToast = useCallback((message) => {
     setToast(message);
@@ -45,11 +45,14 @@ export function useMatchApp({ pricePerHour = 500, onHistoryChange } = {}) {
   );
 
   const syncSetupNames = useCallback(() => {
-    Match.syncPlayerNamesFromSelection(stateRef.current.setup, loadProfiles());
+    const list = loadProfiles();
+    Match.syncPlayerNamesFromSelection(stateRef.current.setup, list);
+    Match.syncPlayersFromProfiles(stateRef.current, list);
   }, []);
 
   return {
     state: stateRef.current,
+    revision,
     profiles,
     profilesVersion,
     toast,

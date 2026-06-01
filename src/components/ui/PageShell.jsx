@@ -9,7 +9,10 @@ export default function PageShell({ children, maxWidth = 720, noBottomPad = fals
       sx={{
         ...sx.page,
         maxWidth,
-        ...(noBottomPad ? { pb: { xs: 2, sm: 2.5 } } : {}),
+        pt: 'max(16px, env(safe-area-inset-top))',
+        ...(noBottomPad
+          ? { pb: { xs: 2, sm: 2.5 } }
+          : { pb: 'calc(24px + env(safe-area-inset-bottom))' }),
       }}
     >
       {children}

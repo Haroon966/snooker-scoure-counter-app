@@ -3,7 +3,7 @@ import Typography from '@mui/material/Typography';
 import Stack from '@mui/material/Stack';
 import { useAppTheme } from '../../hooks/useAppTheme.js';
 
-const LOGO_SRC = `${import.meta.env.BASE_URL}logo.jpg`;
+const LOGO_SRC = `${import.meta.env.BASE_URL}logo-app.png`;
 
 export default function AppBrand({ subtitle = null, size = 'md' }) {
   const { tokens } = useAppTheme();

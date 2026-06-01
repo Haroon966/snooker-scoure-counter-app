@@ -52,7 +52,7 @@ const darkTokens = {
       muted: '#5C6B63',
     },
     border: {
-      default: 'rgba(255, 255, 255, 0.08)',
+      default: 'rgba(16, 185, 129, 0.28)',
       focus: 'rgba(16, 185, 129, 0.55)',
       active: '#10B981',
     },
@@ -95,7 +95,7 @@ const lightTokens = {
       muted: '#7A8B83',
     },
     border: {
-      default: 'rgba(4, 120, 87, 0.12)',
+      default: 'rgba(4, 120, 87, 0.22)',
       focus: 'rgba(16, 185, 129, 0.45)',
       active: '#059669',
     },

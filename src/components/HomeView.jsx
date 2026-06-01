@@ -1,21 +1,18 @@
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
-import FormControl from '@mui/material/FormControl';
-import InputLabel from '@mui/material/InputLabel';
-import MenuItem from '@mui/material/MenuItem';
-import Select from '@mui/material/Select';
 import Stack from '@mui/material/Stack';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
+import Switch from '@mui/material/Switch';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import IconButton from '@mui/material/IconButton';
 import CheckCircleOutlinedIcon from '@mui/icons-material/CheckCircleOutlined';
 import AddIcon from '@mui/icons-material/Add';
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined';
-import PlayArrowOutlinedIcon from '@mui/icons-material/PlayArrowOutlined';
-import ReplayOutlinedIcon from '@mui/icons-material/ReplayOutlined';
 import HistoryOutlinedIcon from '@mui/icons-material/HistoryOutlined';
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import GetAppOutlinedIcon from '@mui/icons-material/GetAppOutlined';
 import { alpha } from '@mui/material/styles';
 import { useState } from 'react';
 import {
@@ -37,6 +34,9 @@ import {
   wizardStepLabels,
   wizardActiveStep,
   ensureTournamentSeedOrder,
+  needsTournamentBracketStep,
+  getTeamForProfile,
+  isTeamSetupValid,
 } from '../state/match-state.js';
 import PlayerAvatar from './PlayerAvatar.jsx';
 import TournamentBracketSetup from './TournamentBracketSetup.jsx';
@@ -47,16 +47,9 @@ import WizardFooter from './ui/WizardFooter.jsx';
 import SettingsModal from './SettingsModal.jsx';
 import AppBrand from './ui/AppBrand.jsx';
 import GlassPanel from './ui/GlassPanel.jsx';
+import HomeActionBar from './ui/HomeActionBar.jsx';
 import { useAppTheme } from '../hooks/useAppTheme.js';
 import { blurActiveElement } from '../utils/dialogFocus.js';
-
-function shouldShowTournamentBracketSetup(setup, preset) {
-  return (
-    setup.multiPlayerFormat === 'tournament' &&
-    setup.selectedProfileIds.length > 2 &&
-    preset?.maxReds != null
-  );
-}
 
 function ChoiceChip({ label, selected, onClick, tokens }) {
   return (
@@ -92,6 +85,15 @@ export default function HomeView({
   onThemeModeChange,
   pricePerHour,
   onPricePerHourChange,
+  hapticFeedback,
+  onHapticFeedbackChange,
+  keepScreenAwake,
+  onKeepScreenAwakeChange,
+  longPressUndo,
+  onLongPressUndoChange,
+  showInstallBanner,
+  onInstallApp,
+  onDismissInstallBanner,
   onOpenHistory,
   onOpenProfileModal,
   onContinue,
@@ -104,12 +106,16 @@ export default function HomeView({
   onChangeFormat,
   onPickMode,
   onPickTarget,
-  onBestOfChange,
   onCustomTargetChange,
   onSwapSeeds,
+  onSetTeamMode,
+  onAssignToTeam,
+  onRemoveFromTeam,
+  onRenameTeam,
 }) {
   const { tokens, sx } = useAppTheme();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeTeamIndex, setActiveTeamIndex] = useState(0);
   const { setup } = state;
   const step = setup.step;
   const selected = new Set(setup.selectedProfileIds);
@@ -118,9 +124,39 @@ export default function HomeView({
   const reviewStep = wizardReviewStep(setup);
   const preset = getPreset(setup.gameModeId);
 
+  const canResume = hasResumableGame(state);
+  const selectedPlayers = setup.selectedProfileIds
+    .map((id) => profiles.find((p) => p.id === id))
+    .filter(Boolean);
+  const selectedCount = selectedPlayers.length;
+  const canContinue = selectedCount >= 2 && isTeamSetupValid(setup);
+
   if (step === 0) {
     return (
-      <PageShell>
+      <Box
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          width: '100%',
+          maxWidth: 680,
+          mx: 'auto',
+          height: '100dvh',
+          maxHeight: '100dvh',
+          overflow: 'hidden',
+          pt: 'max(16px, env(safe-area-inset-top))',
+          px: { xs: 1.5, sm: 2 },
+        }}
+      >
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            WebkitOverflowScrolling: 'touch',
+            pb: 1,
+          }}
+        >
         <Stack direction="row" sx={{ alignItems: 'flex-start', justifyContent: 'space-between', mb: 1.5 }}>
           <AppBrand size="lg" />
           <Stack direction="row" spacing={0.75} sx={{ alignItems: 'flex-start' }}>
@@ -132,6 +168,8 @@ export default function HomeView({
               }}
               sx={{
                 mt: 0.5,
+                width: 48,
+                height: 48,
                 color: 'text.secondary',
                 bgcolor: tokens.color.glass.bg,
                 backdropFilter: 'blur(12px)',
@@ -150,6 +188,8 @@ export default function HomeView({
               }}
               sx={{
                 mt: 0.5,
+                width: 48,
+                height: 48,
                 color: 'text.secondary',
                 bgcolor: tokens.color.glass.bg,
                 backdropFilter: 'blur(12px)',
@@ -163,92 +203,342 @@ export default function HomeView({
           </Stack>
         </Stack>
 
-        <Typography sx={sx.labelCaps} gutterBottom>
-          Select players
-        </Typography>
-        <Typography sx={{ ...sx.sectionSubtitle, mt: -1, mb: 1.5 }}>
-          Choose at least two to start a match · {setup.selectedProfileIds.length}/{profiles.length} selected
-        </Typography>
+        {showInstallBanner && (
+          <GlassPanel padding={1.25} sx={{ mb: 1.5 }}>
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'flex-start' }}>
+              <GetAppOutlinedIcon sx={{ color: tokens.color.gold.main, mt: 0.25 }} />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={700} sx={{ fontFamily: tokens.font.heading }}>
+                  Install for full-screen scoring
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  Add to your home screen for a faster, app-like experience at the table.
+                </Typography>
+                <Stack direction="row" spacing={1} sx={{ mt: 1.25 }}>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={onInstallApp}
+                    sx={{ minHeight: 44, flex: 1 }}
+                  >
+                    Install
+                  </Button>
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    onClick={onDismissInstallBanner}
+                    sx={{ minHeight: 44, flex: 1 }}
+                  >
+                    Not now
+                  </Button>
+                </Stack>
+              </Box>
+            </Stack>
+          </GlassPanel>
+        )}
 
-        <Stack spacing={1} sx={{ mb: 1.5 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            flexWrap: 'wrap',
+            mb: 1.5,
+          }}
+        >
+          <Box
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              display: 'flex',
+              alignItems: 'baseline',
+              flexWrap: 'wrap',
+              columnGap: 0.75,
+              rowGap: 0.25,
+            }}
+          >
+            <Typography component="span" sx={{ ...sx.labelCaps, mb: 0 }}>
+              Select players
+            </Typography>
+            <Typography component="span" sx={{ ...sx.sectionSubtitle, mt: 0 }}>
+              · choose at least two · {setup.selectedProfileIds.length}/{profiles.length} selected
+              {setup.teamMode ? ' · pick a team, then tap players' : ''}
+            </Typography>
+          </Box>
+          <Button
+            variant="outlined"
+            onClick={() => onOpenProfileModal('add')}
+            sx={{
+              flexShrink: 0,
+              width: 56,
+              height: 56,
+              minWidth: 56,
+              p: 0.5,
+              flexDirection: 'column',
+              gap: 0.25,
+              border: `1.5px solid ${tokens.color.border.default}`,
+              color: tokens.color.gold.main,
+              borderRadius: `${tokens.radius.md}px`,
+              textTransform: 'none',
+              '&:hover': {
+                borderColor: tokens.color.border.focus,
+                bgcolor: alpha(tokens.color.gold.main, 0.08),
+              },
+            }}
+          >
+            <AddIcon sx={{ fontSize: 20 }} />
+            <Typography
+              component="span"
+              sx={{
+                fontSize: '0.625rem',
+                lineHeight: 1.1,
+                fontWeight: 700,
+                textAlign: 'center',
+                maxWidth: '100%',
+              }}
+            >
+              Add player
+            </Typography>
+          </Button>
+        </Box>
+
+        <FormControlLabel
+          control={
+            <Switch
+              checked={Boolean(setup.teamMode)}
+              onChange={(e) => {
+                if (e.target.checked) setActiveTeamIndex(0);
+                onSetTeamMode(e.target.checked);
+              }}
+              color="primary"
+            />
+          }
+          label={
+            <Typography variant="body2" fontWeight={600} sx={{ fontFamily: tokens.font.heading }}>
+              Play as teams
+            </Typography>
+          }
+          sx={{ mb: 1.5, ml: 0 }}
+        />
+
+        {setup.teamMode && (
+          <>
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              Select a team, then tap players below to add them
+            </Typography>
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(2, 1fr)',
+                gap: 1,
+                mb: 1.5,
+              }}
+            >
+              {setup.teams.map((team, teamIndex) => {
+                const isActiveTeam = activeTeamIndex === teamIndex;
+                const teamAccent =
+                  teamIndex === 0
+                    ? {
+                        main: tokens.color.baize.light,
+                        dim: alpha(tokens.color.baize.main, 0.22),
+                        glow: alpha(tokens.color.baize.light, 0.4),
+                      }
+                    : {
+                        main: tokens.color.gold.main,
+                        dim: alpha(tokens.color.gold.main, 0.2),
+                        glow: alpha(tokens.color.gold.main, 0.35),
+                      };
+                return (
+                  <GlassPanel
+                    key={team.id}
+                    active={false}
+                    onClick={() => setActiveTeamIndex(teamIndex)}
+                    padding={1.25}
+                    sx={{
+                      cursor: 'pointer',
+                      border: `2px solid ${
+                        isActiveTeam ? teamAccent.main : tokens.color.border.default
+                      }`,
+                      bgcolor: isActiveTeam ? teamAccent.dim : tokens.color.glass.bg,
+                      boxShadow: isActiveTeam
+                        ? `0 0 28px ${teamAccent.glow}, ${tokens.shadow.inner}`
+                        : `${tokens.shadow.sm}, ${tokens.shadow.inner}`,
+                      transition:
+                        'border-color 250ms, box-shadow 250ms, background-color 250ms',
+                      '&:hover': {
+                        borderColor: isActiveTeam
+                          ? teamAccent.main
+                          : tokens.color.border.focus,
+                        bgcolor: isActiveTeam
+                          ? teamAccent.dim
+                          : alpha(tokens.color.bg.elevated, 0.6),
+                      },
+                    }}
+                  >
+                    <TextField
+                      size="small"
+                      fullWidth
+                      label={`Team ${teamIndex === 0 ? 'A' : 'B'}`}
+                      value={team.name}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => onRenameTeam(teamIndex, e.target.value)}
+                      slotProps={{ htmlInput: { maxLength: 20 } }}
+                      sx={{ mb: 1 }}
+                    />
+                    <Typography
+                      variant="caption"
+                      sx={{
+                        display: 'block',
+                        mb: 0.75,
+                        fontWeight: isActiveTeam ? 700 : 500,
+                        color: isActiveTeam ? teamAccent.main : 'text.secondary',
+                      }}
+                    >
+                      {isActiveTeam ? 'Selected — tap players to add' : 'Tap to select'}
+                    </Typography>
+                    <Stack direction="row" spacing={0.5} sx={{ flexWrap: 'wrap', minHeight: 32 }}>
+                      {team.profileIds.map((id) => {
+                        const p = profiles.find((pr) => pr.id === id);
+                        if (!p) return null;
+                        return (
+                          <Chip
+                            key={id}
+                            size="small"
+                            avatar={<PlayerAvatar player={p} size="sm" />}
+                            label={p.name}
+                            onDelete={(e) => {
+                              e.stopPropagation();
+                              onRemoveFromTeam(id);
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            sx={{ bgcolor: tokens.color.bg.elevated }}
+                          />
+                        );
+                      })}
+                      {team.profileIds.length === 0 && (
+                        <Typography variant="caption" color="text.secondary">
+                          No players yet
+                        </Typography>
+                      )}
+                    </Stack>
+                  </GlassPanel>
+                );
+              })}
+            </Box>
+          </>
+        )}
+
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(2, 1fr)',
+            gap: 1,
+            mb: 1.5,
+          }}
+        >
           {profiles.map((p) => {
             const isSelected = selected.has(p.id);
+            const teamIdx = setup.teamMode ? getTeamForProfile(setup, p.id) : null;
+            const activeTeam = setup.teamMode ? setup.teams[activeTeamIndex] : null;
             return (
               <GlassPanel
                 key={p.id}
-                active={isSelected}
-                onClick={() => onToggleProfile(p.id)}
-                padding={1.25}
-                sx={{ position: 'relative' }}
+                active={setup.teamMode ? teamIdx != null : isSelected}
+                onClick={() => {
+                  if (setup.teamMode) {
+                    onAssignToTeam(p.id, activeTeamIndex);
+                  } else {
+                    onToggleProfile(p.id);
+                  }
+                }}
+                padding={1}
+                sx={{
+                  position: 'relative',
+                  minHeight: 108,
+                  opacity:
+                    setup.teamMode && selectedCount >= 7 && teamIdx == null ? 0.45 : 1,
+                }}
               >
-                <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-                  <PlayerAvatar player={p} size="md" ring={isSelected} />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Typography fontWeight={700} noWrap sx={{ fontFamily: tokens.font.heading }}>
-                      {p.name}
-                    </Typography>
-                    <Typography variant="caption" color="text.secondary">
-                      {isSelected ? 'Selected' : 'Tap to select'}
-                    </Typography>
-                  </Box>
-                  {isSelected && <CheckCircleOutlinedIcon sx={{ color: tokens.color.baize.light }} />}
-                  <IconButton
-                    size="small"
-                    aria-label={`Edit ${p.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onOpenProfileModal('edit', p);
+                <IconButton
+                  size="small"
+                  aria-label={`Edit ${p.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onOpenProfileModal('edit', p);
+                  }}
+                  sx={{
+                    position: 'absolute',
+                    top: 4,
+                    right: 4,
+                    color: 'text.secondary',
+                    width: 32,
+                    height: 32,
+                  }}
+                >
+                  <EditOutlinedIcon sx={{ fontSize: 16 }} />
+                </IconButton>
+                {isSelected && (
+                  <CheckCircleOutlinedIcon
+                    sx={{
+                      position: 'absolute',
+                      top: 6,
+                      left: 6,
+                      fontSize: 18,
+                      color: tokens.color.baize.light,
                     }}
-                    sx={{ color: 'text.secondary' }}
+                  />
+                )}
+                <Stack
+                  spacing={0.75}
+                  sx={{
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    textAlign: 'center',
+                    pt: 0.5,
+                    px: 0.5,
+                  }}
+                >
+                  <PlayerAvatar player={p} size="md" ring={isSelected} />
+                  <Typography
+                    fontWeight={700}
+                    noWrap
+                    sx={{ fontFamily: tokens.font.heading, width: '100%', fontSize: '0.9rem' }}
                   >
-                    <EditOutlinedIcon sx={{ fontSize: 18 }} />
-                  </IconButton>
+                    {p.name}
+                  </Typography>
+                  <Typography variant="caption" color="text.secondary" noWrap sx={{ width: '100%' }}>
+                    {setup.teamMode
+                      ? teamIdx === 0
+                        ? setup.teams[0].name
+                        : teamIdx === 1
+                          ? setup.teams[1].name
+                          : activeTeam
+                            ? `Add to ${activeTeam.name}`
+                            : 'Select a team first'
+                      : isSelected
+                        ? 'Selected'
+                        : 'Tap to select'}
+                  </Typography>
                 </Stack>
               </GlassPanel>
             );
           })}
-
-          <GlassPanel onClick={() => onOpenProfileModal('add')} padding={1.25} sx={{ borderStyle: 'dashed' }}>
-            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center', justifyContent: 'center' }}>
-              <AddIcon sx={{ color: tokens.color.gold.main }} />
-              <Typography fontWeight={600} color="text.secondary">
-                Add new player
-              </Typography>
-            </Stack>
-          </GlassPanel>
-        </Stack>
+        </Box>
 
         {profiles.length === 0 && (
           <Typography color="text.secondary" sx={{ textAlign: 'center', mb: 2 }}>
             Add at least two players to get started
           </Typography>
         )}
+        </Box>
 
-        <Stack spacing={1}>
-          <Button
-            variant="contained"
-            size="large"
-            fullWidth
-            disabled={setup.selectedProfileIds.length < 2}
-            onClick={onContinue}
-            startIcon={<PlayArrowOutlinedIcon />}
-            sx={{ minHeight: 44, fontSize: '1rem', borderRadius: `${tokens.radius.lg}px` }}
-          >
-            Continue
-          </Button>
-          {hasResumableGame(state) && (
-            <Button
-              variant="outlined"
-              size="large"
-              fullWidth
-              onClick={onResume}
-              startIcon={<ReplayOutlinedIcon />}
-              sx={{ minHeight: 44, borderRadius: `${tokens.radius.lg}px` }}
-            >
-              Resume match
-            </Button>
-          )}
-        </Stack>
+        <HomeActionBar
+          selectedPlayers={selectedPlayers}
+          canContinue={canContinue}
+          canResume={canResume}
+          onContinue={onContinue}
+          onResume={onResume}
+        />
 
         <SettingsModal
           open={settingsOpen}
@@ -257,8 +547,14 @@ export default function HomeView({
           onThemeModeChange={onThemeModeChange}
           pricePerHour={pricePerHour}
           onPricePerHourChange={onPricePerHourChange}
+          hapticFeedback={hapticFeedback}
+          onHapticFeedbackChange={onHapticFeedbackChange}
+          keepScreenAwake={keepScreenAwake}
+          onKeepScreenAwakeChange={onKeepScreenAwakeChange}
+          longPressUndo={longPressUndo}
+          onLongPressUndoChange={onLongPressUndoChange}
         />
-      </PageShell>
+      </Box>
     );
   }
 
@@ -324,7 +620,6 @@ export default function HomeView({
         setup={setup}
         profiles={profiles}
         onPickTarget={onPickTarget}
-        onBestOfChange={onBestOfChange}
         onCustomTargetChange={onCustomTargetChange}
         onSwapSeeds={onSwapSeeds}
       />
@@ -343,17 +638,45 @@ export default function HomeView({
         <Typography sx={sx.sectionTitle}>Ready to start</Typography>
         <Typography sx={sx.sectionSubtitle}>Review your match settings</Typography>
         <GlassPanel padding={1.5}>
-          <Typography sx={{ ...sx.labelCaps, mb: 1 }}>Players</Typography>
-          <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', mb: 1.5 }}>
-            {selectedPlayers.map((p) => (
-              <Chip
-                key={p.id}
-                avatar={<PlayerAvatar player={p} size="sm" />}
-                label={p.name}
-                sx={{ bgcolor: tokens.color.bg.elevated }}
-              />
-            ))}
-          </Stack>
+          <Typography sx={{ ...sx.labelCaps, mb: 1 }}>
+            {setup.teamMode ? 'Teams' : 'Players'}
+          </Typography>
+          {setup.teamMode ? (
+            <Stack spacing={1.5} sx={{ mb: 1.5 }}>
+              {setup.teams.map((team) => (
+                <Box key={team.id}>
+                  <Typography variant="body2" fontWeight={700} sx={{ mb: 0.75, fontFamily: tokens.font.heading }}>
+                    {team.name}
+                  </Typography>
+                  <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap' }}>
+                    {team.profileIds.map((id) => {
+                      const p = profiles.find((pr) => pr.id === id);
+                      if (!p) return null;
+                      return (
+                        <Chip
+                          key={id}
+                          avatar={<PlayerAvatar player={p} size="sm" />}
+                          label={p.name}
+                          sx={{ bgcolor: tokens.color.bg.elevated }}
+                        />
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              ))}
+            </Stack>
+          ) : (
+            <Stack direction="row" spacing={0.75} sx={{ flexWrap: 'wrap', mb: 1.5 }}>
+              {selectedPlayers.map((p) => (
+                <Chip
+                  key={p.id}
+                  avatar={<PlayerAvatar player={p} size="sm" />}
+                  label={p.name}
+                  sx={{ bgcolor: tokens.color.bg.elevated }}
+                />
+              ))}
+            </Stack>
+          )}
           {wizardUsesFormatStep(setup) && setup.multiPlayerFormat && (
             <ReviewRow label="Format" value={formatLabel(setup.multiPlayerFormat)} />
           )}
@@ -368,18 +691,52 @@ export default function HomeView({
   }
 
   return (
-    <PageShell>
-      <StepIndicator activeStep={wizardActiveStep(setup, step)} labels={stepLabels} />
-      {body}
-      <WizardFooter
-        backLabel={step === 1 ? 'Players' : 'Back'}
-        nextLabel={isReview ? 'Start match' : 'Next'}
-        canNext={canNext}
-        onBack={onWizardBack}
-        onNext={isReview ? onStartMatch : onWizardNext}
-        isReview={isReview}
-      />
-    </PageShell>
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        maxWidth: 680,
+        mx: 'auto',
+        height: '100dvh',
+        maxHeight: '100dvh',
+        overflow: 'hidden',
+        pt: 'max(16px, env(safe-area-inset-top))',
+        px: { xs: 1.5, sm: 2 },
+      }}
+    >
+      <Box sx={{ flexShrink: 0, pb: 1 }}>
+        <StepIndicator activeStep={wizardActiveStep(setup, step)} labels={stepLabels} />
+      </Box>
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          WebkitOverflowScrolling: 'touch',
+          pb: 1,
+        }}
+      >
+        {body}
+      </Box>
+      <Box
+        sx={{
+          flexShrink: 0,
+          pb: 'max(8px, env(safe-area-inset-bottom))',
+        }}
+      >
+        <WizardFooter
+          backLabel={step === 1 ? 'Players' : 'Back'}
+          nextLabel={isReview ? 'Start match' : 'Next'}
+          canNext={canNext}
+          onBack={onWizardBack}
+          onNext={isReview ? onStartMatch : onWizardNext}
+          isReview={isReview}
+          sticky
+        />
+      </Box>
+    </Box>
   );
 }
 
@@ -398,23 +755,18 @@ function ReviewRow({ label, value }) {
 }
 
 function needsFormatLine(setup) {
+  if (setup.teamMode) return false;
   return setup.selectedProfileIds.length > 2 && setup.multiPlayerFormat;
 }
 
 function playerMeta(setup, m) {
+  if (setup.teamMode) return '2 teams';
   if (setup.multiPlayerFormat === 'single' && setup.selectedProfileIds.length > 2) return '2–7 players';
   if (setup.multiPlayerFormat === 'tournament') return '2 per match';
   return m.maxPlayers > 2 ? '2–7 players' : '2 players';
 }
 
-function OptionsStep({
-  setup,
-  profiles,
-  onPickTarget,
-  onBestOfChange,
-  onCustomTargetChange,
-  onSwapSeeds,
-}) {
+function OptionsStep({ setup, profiles, onPickTarget, onCustomTargetChange, onSwapSeeds }) {
   const { tokens, sx } = useAppTheme();
   const preset = getPreset(setup.gameModeId);
   if (!preset) return <Typography>Select a game type first.</Typography>;
@@ -461,24 +813,14 @@ function OptionsStep({
     );
   }
 
+  if (!needsTournamentBracketStep(setup)) return null;
+
   ensureTournamentSeedOrder(setup);
   return (
     <>
-      <Typography sx={sx.sectionTitle}>Frame settings</Typography>
-      <Typography sx={sx.sectionSubtitle}>Configure frames and bracket order</Typography>
-      {shouldShowTournamentBracketSetup(setup, preset) && (
-        <TournamentBracketSetup seedOrder={setup.tournamentSeedOrder} profiles={profiles} onSwap={onSwapSeeds} />
-      )}
-      <FormControl size="small" sx={{ minWidth: 160, mt: 1.5 }}>
-        <InputLabel>Best of</InputLabel>
-        <Select value={setup.bestOf} label="Best of" onChange={(e) => onBestOfChange(Number(e.target.value))}>
-          {[1, 3, 5, 7, 9].map((b) => (
-            <MenuItem key={b} value={b}>
-              {b} frames
-            </MenuItem>
-          ))}
-        </Select>
-      </FormControl>
+      <Typography sx={sx.sectionTitle}>Bracket order</Typography>
+      <Typography sx={sx.sectionSubtitle}>Set seed order for the knockout draw</Typography>
+      <TournamentBracketSetup seedOrder={setup.tournamentSeedOrder} profiles={profiles} onSwap={onSwapSeeds} />
     </>
   );
 }

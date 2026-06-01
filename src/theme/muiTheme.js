@@ -10,7 +10,7 @@ export function createSx(tokens) {
     bgcolor: color.glass.bg,
     backdropFilter: 'blur(20px) saturate(160%)',
     WebkitBackdropFilter: 'blur(20px) saturate(160%)',
-    border: `1px solid ${active ? color.baize.light : color.glass.border}`,
+    border: `1.5px solid ${active ? color.baize.light : color.border.default}`,
     borderRadius: `${radius.lg}px`,
     boxShadow: active ? `${shadow.glow}, ${shadow.inner}` : `${shadow.sm}, ${shadow.inner}`,
     transition: 'border-color 250ms, box-shadow 250ms, transform 250ms',
@@ -30,9 +30,13 @@ export function createSx(tokens) {
       ...glassPanel(selected),
       cursor: 'pointer',
       '&:hover': {
-        borderColor: selected ? color.baize.light : alpha(color.baize.light, 0.45),
+        borderColor: selected ? color.baize.light : color.border.focus,
         transform: 'translateY(-1px)',
         boxShadow: selected ? shadow.glow : shadow.md,
+      },
+      '&:focus-visible': {
+        outline: `2px solid ${color.border.focus}`,
+        outlineOffset: 2,
       },
     }),
     scoreDisplay: {

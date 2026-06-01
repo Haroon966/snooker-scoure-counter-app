@@ -15,6 +15,9 @@ import LightModeOutlinedIcon from '@mui/icons-material/LightModeOutlined';
 import TextField from '@mui/material/TextField';
 import AttachMoneyOutlinedIcon from '@mui/icons-material/AttachMoneyOutlined';
 import GitHubIcon from '@mui/icons-material/GitHub';
+import VibrationOutlinedIcon from '@mui/icons-material/VibrationOutlined';
+import StayCurrentPortraitOutlinedIcon from '@mui/icons-material/StayCurrentPortraitOutlined';
+import TouchAppOutlinedIcon from '@mui/icons-material/TouchAppOutlined';
 import GlassPanel from './ui/GlassPanel.jsx';
 import { useState } from 'react';
 import { useAppTheme } from '../hooks/useAppTheme.js';
@@ -28,6 +31,8 @@ const DEVELOPER = {
   avatarLarge: 'https://github.com/Haroon966.png?size=460',
 };
 
+const wakeLockSupported = typeof navigator !== 'undefined' && 'wakeLock' in navigator;
+
 export default function SettingsModal({
   open,
   onClose,
@@ -35,6 +40,12 @@ export default function SettingsModal({
   onThemeModeChange,
   pricePerHour,
   onPricePerHourChange,
+  hapticFeedback = true,
+  onHapticFeedbackChange,
+  keepScreenAwake = true,
+  onKeepScreenAwakeChange,
+  longPressUndo = false,
+  onLongPressUndoChange,
 }) {
   const { tokens, sx } = useAppTheme();
   const isDark = themeMode === 'dark';
@@ -63,8 +74,8 @@ export default function SettingsModal({
         }}
       >
         Settings
-        <IconButton aria-label="Close settings" onClick={handleClose} size="small" sx={{ color: 'text.secondary' }}>
-          <CloseIcon fontSize="small" />
+        <IconButton aria-label="Close settings" onClick={handleClose} sx={{ color: 'text.secondary', width: 48, height: 48 }}>
+          <CloseIcon />
         </IconButton>
       </DialogTitle>
       <DialogContent sx={{ pt: 1 }}>
@@ -90,6 +101,73 @@ export default function SettingsModal({
               checked={isDark}
               onChange={(e) => onThemeModeChange(e.target.checked ? 'dark' : 'light')}
               slotProps={{ input: { 'aria-label': 'Toggle dark mode' } }}
+            />
+          </Stack>
+        </GlassPanel>
+
+        <Divider sx={{ mb: 1.5, borderColor: tokens.color.border.default }} />
+
+        <Typography sx={{ ...sx.labelCaps, mb: 1.5 }}>Match experience</Typography>
+        <GlassPanel padding={1.25} sx={{ mb: 1 }}>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
+              <VibrationOutlinedIcon sx={{ color: tokens.color.baize.light }} />
+              <Box>
+                <Typography variant="body2" fontWeight={700}>
+                  Haptic feedback
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Vibrate when scoring
+                </Typography>
+              </Box>
+            </Stack>
+            <Switch
+              checked={hapticFeedback}
+              onChange={(e) => onHapticFeedbackChange?.(e.target.checked)}
+              slotProps={{ input: { 'aria-label': 'Toggle haptic feedback' } }}
+            />
+          </Stack>
+        </GlassPanel>
+        <GlassPanel padding={1.25} sx={{ mb: 1 }}>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', flex: 1, minWidth: 0 }}>
+              <StayCurrentPortraitOutlinedIcon sx={{ color: tokens.color.gold.main }} />
+              <Box>
+                <Typography variant="body2" fontWeight={700}>
+                  Keep screen on
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {wakeLockSupported
+                    ? 'During live matches'
+                    : 'Not supported in this browser'}
+                </Typography>
+              </Box>
+            </Stack>
+            <Switch
+              checked={keepScreenAwake}
+              disabled={!wakeLockSupported}
+              onChange={(e) => onKeepScreenAwakeChange?.(e.target.checked)}
+              slotProps={{ input: { 'aria-label': 'Toggle keep screen on' } }}
+            />
+          </Stack>
+        </GlassPanel>
+        <GlassPanel padding={1.25} sx={{ mb: 1.5 }}>
+          <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center', justifyContent: 'space-between' }}>
+            <Stack direction="row" spacing={1.25} sx={{ alignItems: 'center' }}>
+              <TouchAppOutlinedIcon sx={{ color: tokens.color.baize.light }} />
+              <Box>
+                <Typography variant="body2" fontWeight={700}>
+                  Long-press to undo
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  Hold active player&apos;s score for 0.5s
+                </Typography>
+              </Box>
+            </Stack>
+            <Switch
+              checked={longPressUndo}
+              onChange={(e) => onLongPressUndoChange?.(e.target.checked)}
+              slotProps={{ input: { 'aria-label': 'Toggle long press undo' } }}
             />
           </Stack>
         </GlassPanel>

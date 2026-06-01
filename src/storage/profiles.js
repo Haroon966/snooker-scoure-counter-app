@@ -69,13 +69,29 @@ export function addProfile(profiles, name, avatar = null) {
   return profile;
 }
 
+/**
+ * @returns {{ ok: true } | { ok: false, reason: 'not_found' | 'duplicate' | 'empty_name' }}
+ */
 export function updateProfile(profiles, id, updates) {
   const i = profiles.findIndex((p) => p.id === id);
-  if (i < 0) return false;
-  profiles[i] = { ...profiles[i], ...updates };
-  if (updates.name) profiles[i].name = updates.name.trim();
+  if (i < 0) return { ok: false, reason: 'not_found' };
+
+  if (updates.name != null) {
+    const trimmed = String(updates.name).trim();
+    if (!trimmed) return { ok: false, reason: 'empty_name' };
+    const duplicate = profiles.some(
+      (p) => p.id !== id && p.name.toLowerCase() === trimmed.toLowerCase()
+    );
+    if (duplicate) return { ok: false, reason: 'duplicate' };
+    profiles[i].name = trimmed;
+  }
+
+  if ('avatar' in updates) {
+    profiles[i].avatar = updates.avatar ?? null;
+  }
+
   saveProfiles(profiles);
-  return true;
+  return { ok: true };
 }
 
 export function deleteProfile(profiles, id) {

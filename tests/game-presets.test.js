@@ -4,6 +4,7 @@ import {
   getBallPoints,
   getMaxReds,
   getFoulOptions,
+  getAvailableModes,
   isRaceMode,
   isTimedMode,
   isSnookerTableMode,
@@ -34,6 +35,17 @@ describe('game presets', () => {
     for (const id of ['ball15', 'ball6', 'race']) {
       expect(getFoulOptions(getPreset(id))).not.toContain(10);
     }
+  });
+
+  it('team mode shows all game types with 3+ roster players', () => {
+    const modes = getAvailableModes({
+      teamMode: true,
+      selectedProfileIds: ['a', 'b', 'c', 'd'],
+      multiPlayerFormat: null,
+    });
+    expect(modes.map((m) => m.id).sort()).toEqual(
+      ['ball1', 'ball10', 'ball15', 'ball6', 'race', 'timed'].sort()
+    );
   });
 
   it('classifies modes', () => {

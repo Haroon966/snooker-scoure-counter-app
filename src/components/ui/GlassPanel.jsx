@@ -10,6 +10,7 @@ export default function GlassPanel({
   ...props
 }) {
   const { tokens, sx: appSx } = useAppTheme();
+  const interactive = Boolean(onClick);
 
   return (
     <Box
@@ -17,7 +18,16 @@ export default function GlassPanel({
       sx={{
         ...appSx.glassPanel(active),
         p: padding,
-        cursor: onClick ? 'pointer' : 'default',
+        cursor: interactive ? 'pointer' : 'default',
+        ...(interactive && {
+          '&:hover': {
+            borderColor: active ? tokens.color.baize.light : tokens.color.border.focus,
+          },
+          '&:focus-visible': {
+            outline: `2px solid ${tokens.color.border.focus}`,
+            outlineOffset: 2,
+          },
+        }),
         ...sx,
       }}
       {...props}

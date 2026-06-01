@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import IconButton from '@mui/material/IconButton';
 import Typography from '@mui/material/Typography';
 import Box from '@mui/material/Box';
@@ -10,100 +11,57 @@ import DialogTitle from '@mui/material/DialogTitle';
 import DialogContent from '@mui/material/DialogContent';
 import DialogActions from '@mui/material/DialogActions';
 import ArrowBackIcon from '@mui/icons-material/ArrowBack';
+import PersonAddOutlinedIcon from '@mui/icons-material/PersonAddOutlined';
 import UndoOutlinedIcon from '@mui/icons-material/UndoOutlined';
-import TimerOutlinedIcon from '@mui/icons-material/TimerOutlined';
 import EmojiEventsOutlinedIcon from '@mui/icons-material/EmojiEventsOutlined';
 import TrendingDownOutlinedIcon from '@mui/icons-material/TrendingDownOutlined';
 import CheckIcon from '@mui/icons-material/Check';
-import { alpha } from '@mui/material/styles';
-import { formatTwoPlayerLeadStatus, BALL_LABELS } from '../rules/snooker.js';
+import { alpha, keyframes } from '@mui/material/styles';
+import { formatTwoPlayerLeadStatus } from '../rules/snooker.js';
 import {
   getActivePreset,
   getScoreLeaderIndices,
   getMultiPlayerOutcome,
   isMatchPlayable,
   isTournamentMode,
+  showManagePlayersButton,
 } from '../state/match-state.js';
 import {
   getFoulOptions,
   getScoringBallValues,
-  getBallPoints,
   isRaceMode,
   isTimedMode,
+  isFrameMatchMode,
   isSnookerTableMode,
   getModeSummary,
 } from '../rules/game-presets.js';
 import { roundLabel, estimateTotalRounds } from '../rules/tournament.js';
-import { formatTimer, getTimerDisplayMs, formatGameStartTime, getGameStartedAt } from '../ui/timer.js';
+import { formatTimer, getTimerDisplayMs, getGameStartedAt } from '../ui/timer.js';
 import { calculateSessionCost, formatPkr } from '../utils/billing.js';
-import { BALL_COLORS } from '../theme/muiTheme.js';
 import { useAppTheme } from '../hooks/useAppTheme.js';
-import PlayerAvatar from './PlayerAvatar.jsx';
+import PlayerAvatar, { PlayerCardBackdrop } from './PlayerAvatar.jsx';
 import GlassPanel from './ui/GlassPanel.jsx';
+import ScoringPad from './ui/ScoringPad.jsx';
 import MatchWinnerOverlay, { isMatchFinished } from './MatchWinnerOverlay.jsx';
+import AddPlayerToGameModal from './AddPlayerToGameModal.jsx';
+import {
+  getGridSlotCount,
+  getPlayerGridLayout,
+  shouldAddGridFiller,
+} from '../utils/player-grid-layout.js';
+import { formatCallLabel, getCallChipStyle, getCallPoints } from '../utils/call-history.js';
 
-function getBallButtonStyle(value) {
-  const bg = BALL_COLORS[value] ?? '#666666';
-  const color = value === 2 ? '#1A1A1A' : '#FFFFFF';
-  const border =
-    value === 7 ? '2px solid rgba(255, 255, 255, 0.28)' : '2px solid rgba(255, 255, 255, 0.12)';
+const scorePulseKeyframes = keyframes`
+  0% { transform: scale(1); }
+  40% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+`;
 
-  return { bg, color, border };
-}
-
-function BallButton({ value, preset, onClick, disabled, compact }) {
-  const label = BALL_LABELS[value];
-  const pts = getBallPoints(preset, value);
-  const { bg, color, border } = getBallButtonStyle(value);
-  const size = compact ? 56 : 52;
-  return (
-    <Button
-      variant="contained"
-      disableElevation
-      disabled={disabled}
-      onClick={() => onClick(value)}
-      sx={{
-        minWidth: size,
-        width: compact ? size : undefined,
-        height: size,
-        minHeight: size,
-        flex: compact ? '0 0 auto' : 1,
-        color,
-        borderRadius: '50%',
-        border,
-        bgcolor: bg,
-        background: bg,
-        backgroundImage: 'none',
-        boxShadow: `0 4px 14px ${alpha(bg, 0.55)}, inset 0 -2px 4px ${alpha('#000', 0.18)}`,
-        transition: 'filter 150ms, transform 150ms, box-shadow 150ms',
-        flexDirection: 'column',
-        p: 0,
-        fontSize: 10,
-        cursor: disabled ? 'default' : 'pointer',
-        '&.Mui-disabled': {
-          bgcolor: bg,
-          background: bg,
-          backgroundImage: 'none',
-          color,
-          opacity: 0.45,
-        },
-        '&:hover': {
-          bgcolor: bg,
-          background: bg,
-          backgroundImage: 'none',
-          filter: 'brightness(1.08)',
-          boxShadow: `0 6px 18px ${alpha(bg, 0.6)}, inset 0 -2px 4px ${alpha('#000', 0.18)}`,
-        },
-        '&:active:not(:disabled)': { transform: 'scale(0.92)' },
-      }}
-    >
-      <span style={{ fontWeight: 800, lineHeight: 1 }}>{label}</span>
-      <Typography component="span" variant="caption" sx={{ opacity: 0.9, fontSize: '0.6rem', lineHeight: 1 }}>
-        +{pts}
-      </Typography>
-    </Button>
-  );
-}
+const SAFE_BOTTOM = 'env(safe-area-inset-bottom, 0px)';
+const SAFE_TOP = 'env(safe-area-inset-top, 0px)';
+const SAFE_X = 'env(safe-area-inset-left, 0px)';
+const SAFE_X_R = 'env(safe-area-inset-right, 0px)';
+const GRID_GAP = 2;
 
 function tournamentBanner(state) {
   const t = state.tournament;
@@ -134,139 +92,314 @@ function tournamentBracketList(state) {
     });
 }
 
+function PlayerCallHistoryStrip({ calls, preset, tokens, reducedMotion }) {
+  const scrollRef = useRef(null);
+  const callCount = calls?.length ?? 0;
+
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    if (!el || callCount === 0) return;
+    el.scrollTo({
+      left: 0,
+      behavior: reducedMotion ? 'auto' : 'smooth',
+    });
+  }, [callCount, reducedMotion]);
+
+  if (!callCount) return null;
+
+  const recentFirst = [...calls].reverse();
+
+  return (
+    <Box
+      sx={{
+        position: 'relative',
+        borderTop: `1px solid ${alpha(tokens.color.border.default, 0.45)}`,
+        background: alpha(tokens.color.bg.default, 0.35),
+        '&::after': {
+          content: '""',
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          bottom: 0,
+          width: 20,
+          pointerEvents: 'none',
+          background: `linear-gradient(to left, ${alpha(tokens.color.bg.default, 0.9)}, transparent)`,
+        },
+      }}
+    >
+      <Box
+        ref={scrollRef}
+        role="list"
+        aria-label="Scoring history"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+        sx={{
+          display: 'flex',
+          gap: 0.5,
+          alignItems: 'center',
+          px: 1,
+          py: 0.625,
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          WebkitOverflowScrolling: 'touch',
+          scrollSnapType: 'x mandatory',
+          scrollBehavior: reducedMotion ? 'auto' : 'smooth',
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+          '&::-webkit-scrollbar': { display: 'none' },
+        }}
+      >
+        {recentFirst.map((entry, i) => {
+          const { bg, color, border } = getCallChipStyle(entry);
+          const origIndex = calls.length - 1 - i;
+          const pts = getCallPoints(entry, preset);
+          const isFoul = entry.type === 'foul';
+          const label = isFoul ? `−${pts}` : `+${pts}`;
+          const chipSize = label.length > 3 ? 28 : 24;
+
+          return (
+            <Box
+              key={`${entry.type}-${entry.ball ?? 'f'}-${entry.points}-${origIndex}`}
+              role="listitem"
+              component="span"
+              title={formatCallLabel(entry, preset)}
+              sx={{
+                flexShrink: 0,
+                scrollSnapAlign: 'start',
+                width: chipSize,
+                height: chipSize,
+                minWidth: chipSize,
+                boxSizing: 'border-box',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderRadius: '50%',
+                fontSize: label.length > 3 ? '0.5625rem' : '0.625rem',
+                fontWeight: 800,
+                lineHeight: 1,
+                fontFamily: tokens.font.mono,
+                bgcolor: bg,
+                color,
+                border,
+              }}
+            >
+              {label}
+            </Box>
+          );
+        })}
+      </Box>
+    </Box>
+  );
+}
+
 function PlayerScoreCard({
   player,
   index,
   state,
-  twoPlayer,
-  playable,
   preset,
-  ballValues,
-  onPoints,
-  onFoulOpen,
+  playable,
   onSetActivePlayer,
+  onLongPressUndo,
+  longPressUndo,
+  scorePulseTick,
+  reducedMotion,
   tokens,
   sx,
 }) {
   const isActive = state.activePlayer === index;
-  const showBallPad = twoPlayer;
+  const longPressTimer = useRef(null);
+  const [pressing, setPressing] = useState(false);
+
+  const clearLongPress = () => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    setPressing(false);
+  };
+
+  const handlePointerDown = () => {
+    if (!longPressUndo || !playable || !onLongPressUndo) return;
+    setPressing(true);
+    longPressTimer.current = setTimeout(() => {
+      onLongPressUndo();
+      clearLongPress();
+    }, 500);
+  };
+
+  const handleCardClick = () => {
+    if (!playable) return;
+    onSetActivePlayer(index);
+  };
+
+  const pulseActive = scorePulseTick > 0;
 
   return (
-    <GlassPanel
-      active={isActive && playable}
-      onClick={() => playable && !twoPlayer && onSetActivePlayer(index)}
-      padding={twoPlayer ? 1.5 : 1.25}
+    <Box
+      role="button"
+      tabIndex={playable ? 0 : -1}
+      onClick={handleCardClick}
+      onKeyDown={(e) => {
+        if (playable && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          handleCardClick();
+        }
+      }}
       sx={{
-        flex: twoPlayer ? 1 : '0 0 auto',
-        minWidth: twoPlayer ? 0 : 150,
-        cursor: !twoPlayer && playable ? 'pointer' : 'default',
-        transition: 'background-color 250ms, border-color 250ms, box-shadow 250ms',
-        ...(isActive &&
-          playable && {
-            bgcolor: alpha(tokens.color.baize.main, 0.2),
-            backgroundImage: `linear-gradient(145deg, ${alpha(tokens.color.baize.light, 0.28)} 0%, ${alpha(tokens.color.baize.dark, 0.14)} 100%)`,
-            border: `2px solid ${tokens.color.baize.light}`,
-            boxShadow: `${tokens.shadow.glow}, inset 0 1px 0 ${alpha('#fff', 0.1)}`,
-          }),
+        position: 'relative',
+        overflow: 'hidden',
+        minHeight: 0,
+        height: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        cursor: playable ? 'pointer' : 'default',
+        borderRadius: 0,
+        bgcolor: tokens.color.bg.elevated,
+        transition: 'box-shadow 200ms',
+        boxShadow:
+          isActive && playable
+            ? `inset 0 0 0 3px ${tokens.color.baize.light}, 0 0 24px ${alpha(tokens.color.baize.main, 0.35)}`
+            : 'none',
+        '&:focus-visible': {
+          outline: `2px solid ${tokens.color.gold.main}`,
+          outlineOffset: -2,
+        },
       }}
     >
-      <Stack spacing={1} sx={{ alignItems: 'center' }}>
-        <Box sx={{ position: 'relative', display: 'inline-flex' }}>
-          <PlayerAvatar player={player} size={twoPlayer ? 'lg' : 'md'} ring={isActive} />
-          {isActive && playable && (
-            <Box
-              aria-hidden
-              sx={{
-                position: 'absolute',
-                bottom: -2,
-                right: -2,
-                width: 22,
-                height: 22,
-                borderRadius: '50%',
-                bgcolor: tokens.color.baize.main,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: `2px solid ${tokens.color.bg.default}`,
-                boxShadow: tokens.shadow.sm,
-              }}
-            >
-              <CheckIcon sx={{ fontSize: 14, color: '#fff' }} />
-            </Box>
-          )}
-        </Box>
-        <Typography
-          variant="body2"
-          fontWeight={700}
-          noWrap
-          sx={{ maxWidth: '100%', fontFamily: tokens.font.heading, letterSpacing: '-0.01em' }}
+      <PlayerCardBackdrop player={player} isActive={isActive && playable} tokens={tokens} />
+      {isActive && playable && (
+        <Box
+          aria-hidden
+          sx={{
+            position: 'absolute',
+            top: 6,
+            right: 6,
+            zIndex: 2,
+            width: 22,
+            height: 22,
+            borderRadius: '50%',
+            bgcolor: tokens.color.baize.main,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            boxShadow: tokens.shadow.sm,
+          }}
         >
-          {player.name}
-        </Typography>
+          <CheckIcon sx={{ fontSize: 14, color: '#fff' }} />
+        </Box>
+      )}
+      <Stack
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
+          zIndex: 1,
+          p: 1.25,
+          justifyContent: 'center',
+        }}
+      >
         <Typography
+          key={scorePulseTick}
+          onPointerDown={handlePointerDown}
+          onPointerUp={clearLongPress}
+          onPointerLeave={clearLongPress}
+          onPointerCancel={clearLongPress}
           sx={{
             ...sx.scoreDisplay,
-            fontSize: { xs: '3.25rem', sm: '4rem' },
+            textAlign: 'center',
+            fontSize: 'clamp(2.5rem, 8vw, 4.5rem)',
+            lineHeight: 1,
             color: isActive ? tokens.color.text.primary : tokens.color.text.secondary,
-            textShadow: isActive ? `0 0 40px ${tokens.color.baize.glow}` : 'none',
+            textShadow: isActive
+              ? `0 0 40px ${tokens.color.baize.glow}, 0 2px 12px ${alpha(tokens.color.bg.default, 0.9)}`
+              : `0 2px 10px ${alpha(tokens.color.bg.default, 0.85)}`,
+            animation:
+              pulseActive && !reducedMotion ? `${scorePulseKeyframes} 150ms ease-out` : 'none',
+            userSelect: 'none',
+            touchAction: pressing ? 'none' : 'manipulation',
           }}
         >
           {player.frameScore}
         </Typography>
-        <Stack direction="row" spacing={2}>
-          <StatPill label="Break" value={player.currentBreak} tokens={tokens} />
-          {twoPlayer && <StatPill label="Best" value={player.highestBreak} tokens={tokens} />}
-        </Stack>
       </Stack>
-
-      {showBallPad && (
-        <Stack spacing={1} sx={{ mt: 2 }}>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, justifyContent: 'center' }}>
-            {ballValues.map((v) => (
-              <BallButton
-                key={v}
-                value={v}
-                preset={preset}
-                compact
-                disabled={!playable}
-                onClick={() => onPoints(index, v)}
-              />
-            ))}
-          </Box>
-          <Button
-            variant="outlined"
-            color="error"
-            size="small"
-            disabled={!playable}
-            onClick={() => onFoulOpen(index)}
-            sx={{ minHeight: 48, borderRadius: `${tokens.radius.md}px` }}
+      <Box
+        sx={{
+          position: 'relative',
+          zIndex: 1,
+          px: 1.25,
+          py: 1,
+          background: `linear-gradient(to top, ${alpha(tokens.color.bg.default, 0.55)} 0%, transparent 100%)`,
+        }}
+      >
+        <Typography
+          variant="body2"
+          fontWeight={700}
+          noWrap
+          sx={{ fontFamily: tokens.font.heading, letterSpacing: '-0.01em' }}
+        >
+          {player.name}
+        </Typography>
+        {player.members?.length > 0 && (
+          <Stack
+            direction="row"
+            spacing={0.5}
+            sx={{ justifyContent: 'center', flexWrap: 'wrap', mt: 0.75 }}
           >
-            Foul
-          </Button>
-        </Stack>
-      )}
-    </GlassPanel>
+            {player.members.map((m, mi) => (
+              <Box
+                key={m.profileId ?? `${m.name}-${mi}`}
+                title={m.name}
+                sx={{ lineHeight: 0, opacity: 0.85 }}
+              >
+                <PlayerAvatar player={m} size="xs" />
+              </Box>
+            ))}
+          </Stack>
+        )}
+      </Box>
+      <PlayerCallHistoryStrip
+        calls={player.callHistory}
+        preset={preset}
+        tokens={tokens}
+        reducedMotion={reducedMotion}
+      />
+    </Box>
   );
 }
 
-function StatPill({ label, value, tokens }) {
+function PlayerGridFillerCard({ tokens }) {
   return (
-    <Box sx={{ textAlign: 'center' }}>
-      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', fontSize: '0.625rem', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
-        {label}
-      </Typography>
-      <Typography variant="body1" fontWeight={700} sx={{ fontVariantNumeric: 'tabular-nums', fontFamily: tokens.font.mono }}>
-        {value}
-      </Typography>
-    </Box>
+    <Box
+      aria-hidden
+      sx={{
+        position: 'relative',
+        overflow: 'hidden',
+        minHeight: 0,
+        height: '100%',
+        bgcolor: alpha(tokens.color.bg.elevated, 0.45),
+        border: `1px dashed ${alpha(tokens.color.border.default, 0.6)}`,
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+      }}
+    />
   );
 }
 
 export default function GameView({
   state,
+  stateRevision = 0,
+  profiles,
+  profilesVersion = 0,
   pricePerHour,
+  scorePulseByPlayer,
+  reducedMotion,
+  longPressUndo,
+  liveAnnouncement,
   onLeave,
+  onAddPlayer,
+  onRemovePlayer,
   onUndo,
+  onLongPressUndo,
   onPoints,
   onFoulOpen,
   onFoulApply,
@@ -275,16 +408,34 @@ export default function GameView({
   onEndMatchByScore,
   onEndMatchCancel,
   onEndMatchClose,
-  onAwardFrame,
+  onNextFrame,
   onSetActivePlayer,
   onTick,
   onGoHome,
 }) {
   const { tokens, sx } = useAppTheme();
+  const isLandscape = useMediaQuery('(orientation: landscape)');
+  const isNarrow = useMediaQuery('(max-width: 600px)');
+  const [addPlayerOpen, setAddPlayerOpen] = useState(false);
+  const showManagePlayers = useMemo(
+    () => showManagePlayersButton(state),
+    [
+      stateRevision,
+      state.screen,
+      state.tournament,
+      state.game?.status,
+      state.game?.modeId,
+      state.setup?.gameModeId,
+      state.setup?.multiPlayerFormat,
+      state.setup?.selectedProfileIds?.length,
+      state.players.length,
+    ]
+  );
   const preset = getActivePreset(state);
   const twoPlayer = state.players.length === 2;
   const playable = isMatchPlayable(state);
   const ballValues = getScoringBallValues(preset);
+  const activePlayer = state.players[state.activePlayer];
 
   useEffect(() => {
     if (state.screen !== 'game') return undefined;
@@ -296,7 +447,6 @@ export default function GameView({
   const showWinnerOverlay = isMatchFinished(state) && completeMsg;
   const bracketLines = tournamentBracketList(state);
   const gameStartedAt = getGameStartedAt(state);
-  const startTimeLabel = formatGameStartTime(gameStartedAt);
   const timerDisplay = isTimedMode(preset) && gameStartedAt ? formatTimer(getTimerDisplayMs(state)) : null;
   const sessionCost =
     isTimedMode(preset) && gameStartedAt
@@ -309,12 +459,14 @@ export default function GameView({
   const multiWinnerIndices = multiOutcome ? multiOutcome.winnerIndices : [];
   const multiLoserIndices = multiOutcome ? multiOutcome.loserIndices : [];
   const multiLoserNames = multiLoserIndices.map((i) => state.players[i]?.name).filter(Boolean);
+  const frameMatch = isFrameMatchMode(preset) && twoPlayer && !state.tournament;
   const endMatchConfirmLabel = getEndMatchConfirmLabel({
     scoresTied,
     multiPlayer,
     scoreLeader,
     multiLoserNames,
   });
+  const nextFrameLabel = getNextFrameLabel({ scoresTied, scoreLeader });
 
   let leadStatusLabel = null;
   if (isSnookerTableMode(preset) && twoPlayer && state.players.length === 2) {
@@ -326,194 +478,312 @@ export default function GameView({
     }
   }
 
+  const handleScore = (value) => {
+    onPoints(state.activePlayer, value);
+  };
+
+  const handleFoul = () => {
+    onFoulOpen(state.activePlayer);
+  };
+
+  const playerCount = state.players.length;
+  const gridSlotCount = getGridSlotCount(playerCount);
+  const grid = getPlayerGridLayout(gridSlotCount, {
+    orientation: isLandscape ? 'landscape' : 'portrait',
+  });
+  const showGridFiller = shouldAddGridFiller(playerCount);
+  const hasStatusBanners =
+    (completeMsg && !showWinnerOverlay) ||
+    (isTournamentMode(state) && tournamentBanner(state)) ||
+    (isRaceMode(preset) && state.game.targetScore && !isTournamentMode(state)) ||
+    (bracketLines && completeMsg) ||
+    leadStatusLabel;
+
+  const stickyChrome = {
+    width: '100%',
+    flexShrink: 0,
+    m: 0,
+    bgcolor: tokens.color.bg.default,
+    borderColor: tokens.color.border.default,
+  };
+
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100dvh', pb: 1 }}>
-      <Box sx={{ px: 1.5, pt: 1, pb: 0.5 }}>
-        <GlassPanel padding={1}>
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
-            <IconButton onClick={onLeave} aria-label="Leave match" size="small" sx={{ color: 'text.secondary' }}>
-              <ArrowBackIcon />
+    <Box
+      sx={{
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '100dvh',
+        maxHeight: '100dvh',
+        m: 0,
+        p: 0,
+        overflow: 'hidden',
+        overscrollBehaviorY: 'contain',
+      }}
+    >
+      <Box
+        component="div"
+        aria-live="polite"
+        aria-atomic="true"
+        sx={{
+          position: 'absolute',
+          width: 1,
+          height: 1,
+          padding: 0,
+          margin: -1,
+          overflow: 'hidden',
+          clip: 'rect(0,0,0,0)',
+          whiteSpace: 'nowrap',
+          border: 0,
+        }}
+      >
+        {liveAnnouncement}
+      </Box>
+
+      <Box
+        component="header"
+        sx={{
+          ...stickyChrome,
+          position: 'sticky',
+          top: 0,
+          zIndex: 20,
+          pt: SAFE_TOP,
+          pb: 0,
+          borderBottom: `1px solid ${tokens.color.border.default}`,
+          boxShadow: `0 4px 16px ${alpha(tokens.color.bg.default, 0.9)}`,
+        }}
+      >
+        <Stack
+          direction="row"
+          spacing={0.5}
+          sx={{
+            alignItems: 'center',
+            minHeight: 44,
+            py: 0.5,
+            pl: `calc(4px + ${SAFE_X})`,
+            pr: `calc(4px + ${SAFE_X_R})`,
+          }}
+        >
+          <IconButton
+            onClick={onLeave}
+            aria-label="Leave match"
+            size="small"
+            sx={{ color: 'text.secondary', width: 40, height: 40, flexShrink: 0 }}
+          >
+            <ArrowBackIcon fontSize="small" />
+          </IconButton>
+          <Box sx={{ flex: 1, textAlign: 'center', minWidth: 0, px: 0.5 }}>
+            <Typography
+              variant="body2"
+              fontWeight={700}
+              noWrap
+              sx={{ fontFamily: tokens.font.heading, lineHeight: 1.3 }}
+            >
+              {getModeSummary(state)}
+            </Typography>
+            {(timerDisplay || sessionCost) && (
+              <Typography
+                variant="caption"
+                noWrap
+                sx={{
+                  display: 'block',
+                  lineHeight: 1.3,
+                  color: timerDisplay ? tokens.color.gold.main : 'text.secondary',
+                  fontFamily: timerDisplay ? tokens.font.mono : undefined,
+                  fontWeight: timerDisplay ? 700 : 500,
+                }}
+              >
+                {timerDisplay}
+                {timerDisplay && sessionCost ? ` · ${sessionCost}` : sessionCost}
+              </Typography>
+            )}
+          </Box>
+          {showManagePlayers ? (
+            <IconButton
+              onClick={() => setAddPlayerOpen(true)}
+              aria-label="Manage players"
+              size="small"
+              sx={{ color: tokens.color.baize.light, width: 40, height: 40, flexShrink: 0 }}
+            >
+              <PersonAddOutlinedIcon fontSize="small" />
             </IconButton>
-            <Box sx={{ flex: 1, textAlign: 'center', minWidth: 0 }}>
-              <Typography variant="caption" sx={{ ...sx.labelCaps, display: 'block', mb: 0.25 }}>
-                Live match
-              </Typography>
-              <Typography variant="body2" fontWeight={700} noWrap sx={{ fontFamily: tokens.font.heading }}>
-                {getModeSummary(state)}
-              </Typography>
-              {startTimeLabel && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.25 }}>
-                  Started {startTimeLabel}
-                </Typography>
-              )}
-              {timerDisplay && (
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  sx={{ alignItems: 'center', justifyContent: 'center', mt: 0.25, flexWrap: 'wrap' }}
-                >
-                  <Stack direction="row" spacing={0.5} sx={{ alignItems: 'center' }}>
-                    <TimerOutlinedIcon sx={{ fontSize: 14, color: tokens.color.gold.main }} />
-                    <Typography
-                      variant="caption"
-                      sx={{ color: tokens.color.gold.main, fontWeight: 700, fontFamily: tokens.font.mono }}
-                    >
-                      {timerDisplay}
-                    </Typography>
-                  </Stack>
-                  {sessionCost && (
-                    <Typography variant="caption" sx={{ color: tokens.color.text.secondary, fontWeight: 600 }}>
-                      · {sessionCost}
-                    </Typography>
-                  )}
-                </Stack>
-              )}
-            </Box>
-            <Button size="small" onClick={onUndo} sx={{ color: 'text.secondary', minWidth: 0, borderRadius: `${tokens.radius.sm}px` }}>
-              <UndoOutlinedIcon fontSize="small" />
-            </Button>
-          </Stack>
-        </GlassPanel>
+          ) : (
+            <Box sx={{ width: 40, flexShrink: 0 }} aria-hidden />
+          )}
+        </Stack>
       </Box>
 
       <Box
         sx={{
           flex: 1,
-          overflow: 'auto',
-          px: 1.5,
-          py: 0.5,
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
           opacity: playable ? 1 : 0.5,
           transition: 'opacity 250ms',
         }}
       >
-        {completeMsg && !showWinnerOverlay && (
-          <Alert
-            severity="success"
-            icon={<EmojiEventsOutlinedIcon />}
-            sx={{ mb: 1.5, borderRadius: `${tokens.radius.md}px` }}
+        {hasStatusBanners && (
+          <Box
+            sx={{
+              flexShrink: 0,
+              maxHeight: '38%',
+              overflowY: 'auto',
+              px: 1.5,
+              py: 0.5,
+              WebkitOverflowScrolling: 'touch',
+            }}
           >
-            {completeMsg}
-          </Alert>
-        )}
+            {completeMsg && !showWinnerOverlay && (
+              <Alert
+                severity="success"
+                icon={<EmojiEventsOutlinedIcon />}
+                sx={{ mb: 1, borderRadius: `${tokens.radius.md}px` }}
+              >
+                {completeMsg}
+              </Alert>
+            )}
 
-        {isTournamentMode(state) && tournamentBanner(state) && (
-          <Alert severity="info" sx={{ mb: 1.5, borderRadius: `${tokens.radius.md}px` }}>
-            {tournamentBanner(state)}
-          </Alert>
-        )}
+            {isTournamentMode(state) && tournamentBanner(state) && (
+              <Alert severity="info" sx={{ mb: 1, borderRadius: `${tokens.radius.md}px` }}>
+                {tournamentBanner(state)}
+              </Alert>
+            )}
 
-        {isRaceMode(preset) && state.game.targetScore && !isTournamentMode(state) && (
-          <GlassPanel padding={1.25} sx={{ mb: 1.5, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="body2" color="text.secondary">
-              Race to {state.game.targetScore}
-            </Typography>
-            <Typography variant="body2" fontWeight={700} sx={{ color: tokens.color.gold.main }}>
-              {state.players.reduce((a, b) => (a.frameScore >= b.frameScore ? a : b)).name} leads
-            </Typography>
-          </GlassPanel>
-        )}
-
-        {bracketLines && completeMsg && (
-          <GlassPanel padding={1.25} sx={{ mb: 1.5 }}>
-            <Typography sx={{ ...sx.labelCaps, mb: 1 }}>Bracket</Typography>
-            <Stack component="ol" spacing={0.75} sx={{ m: 0, pl: 2.5 }}>
-              {bracketLines.map((line, i) => (
-                <Typography key={i} component="li" variant="body2" color="text.secondary">
-                  {line}
+            {isRaceMode(preset) && state.game.targetScore && !isTournamentMode(state) && (
+              <GlassPanel
+                padding={1.25}
+                sx={{ mb: 1, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              >
+                <Typography variant="body2" color="text.secondary">
+                  Race to {state.game.targetScore}
                 </Typography>
-              ))}
-            </Stack>
-          </GlassPanel>
+                <Typography variant="body2" fontWeight={700} sx={{ color: tokens.color.gold.main }}>
+                  {state.players.reduce((a, b) => (a.frameScore >= b.frameScore ? a : b)).name} leads
+                </Typography>
+              </GlassPanel>
+            )}
+
+            {bracketLines && completeMsg && (
+              <GlassPanel padding={1.25} sx={{ mb: 1 }}>
+                <Typography sx={{ ...sx.labelCaps, mb: 1 }}>Bracket</Typography>
+                <Stack component="ol" spacing={0.75} sx={{ m: 0, pl: 2.5 }}>
+                  {bracketLines.map((line, i) => (
+                    <Typography key={i} component="li" variant="body2" color="text.secondary">
+                      {line}
+                    </Typography>
+                  ))}
+                </Stack>
+              </GlassPanel>
+            )}
+
+            {leadStatusLabel && (
+              <GlassPanel padding={1.25} sx={{ mb: 1 }}>
+                <Typography
+                  variant="body2"
+                  fontWeight={600}
+                  sx={{ fontFamily: tokens.font.heading, color: tokens.color.baize.light }}
+                >
+                  {leadStatusLabel}
+                </Typography>
+              </GlassPanel>
+            )}
+          </Box>
         )}
 
-        {leadStatusLabel && (
-          <GlassPanel padding={1.25} sx={{ mb: 1.5 }}>
-            <Typography
-              variant="body2"
-              fontWeight={600}
-              sx={{ fontFamily: tokens.font.heading, color: tokens.color.baize.light }}
-            >
-              {leadStatusLabel}
-            </Typography>
-          </GlassPanel>
-        )}
-
-        <Stack direction="row" spacing={1} sx={{ overflowX: 'auto', mb: 1.5, pb: 0.25 }}>
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            display: 'grid',
+            gridTemplateColumns: `repeat(${grid.cols}, 1fr)`,
+            gridTemplateRows: `repeat(${grid.rows}, 1fr)`,
+            gap: `${GRID_GAP}px`,
+            p: `${GRID_GAP}px`,
+            bgcolor: tokens.color.bg.default,
+            boxSizing: 'border-box',
+          }}
+        >
           {state.players.map((p, i) => (
             <PlayerScoreCard
               key={i}
               player={p}
               index={i}
               state={state}
-              twoPlayer={twoPlayer}
-              playable={playable}
               preset={preset}
-              ballValues={ballValues}
-              onPoints={onPoints}
-              onFoulOpen={onFoulOpen}
+              playable={playable}
               onSetActivePlayer={onSetActivePlayer}
+              onLongPressUndo={onLongPressUndo}
+              longPressUndo={longPressUndo}
+              scorePulseTick={scorePulseByPlayer?.[i] ?? 0}
+              reducedMotion={reducedMotion}
               tokens={tokens}
               sx={sx}
             />
           ))}
-        </Stack>
-
-        {!twoPlayer && (
-          <GlassPanel padding={1.5}>
-            <Typography variant="caption" color="text.secondary" sx={{ textAlign: 'center', display: 'block', mb: 1.5 }}>
-              Tap a player above, then score below
-            </Typography>
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, justifyContent: 'center', mb: 1.5 }}>
-              {ballValues.map((v) => (
-                <BallButton
-                  key={v}
-                  value={v}
-                  preset={preset}
-                  compact
-                  disabled={!playable}
-                  onClick={(val) => onPoints(state.activePlayer, val)}
-                />
-              ))}
-            </Box>
-            <Button
-              variant="outlined"
-              color="error"
-              fullWidth
-              disabled={!playable}
-              onClick={() => onFoulOpen(state.activePlayer)}
-              sx={{ minHeight: 44 }}
-            >
-              Foul
-            </Button>
-          </GlassPanel>
-        )}
+          {showGridFiller && <PlayerGridFillerCard tokens={tokens} />}
+        </Box>
       </Box>
 
-      <Box sx={{ px: 1.5, pb: 1 }}>
-        <GlassPanel padding={1}>
-          <Stack direction="row" sx={{ flexWrap: 'wrap', gap: 1, alignItems: 'center' }}>
-        {!isRaceMode(preset) &&
-          !isTimedMode(preset) &&
-          state.match.bestOf > 1 &&
-          state.players.map((p, i) => (
-            <Button
-              key={i}
-              size="small"
-              variant="outlined"
-              disabled={!playable}
-              onClick={() => onAwardFrame(i)}
-              sx={{ minHeight: 44 }}
-            >
-              {p.name} wins frame
-            </Button>
-          ))}
-        <Stack direction="row" spacing={1} sx={{ ml: 'auto', flexWrap: 'wrap' }}>
+      <Box
+        component="footer"
+        sx={{
+          ...stickyChrome,
+          position: 'sticky',
+          bottom: 0,
+          zIndex: 20,
+          pt: 0,
+          pb: SAFE_BOTTOM,
+          borderTop: `1px solid ${tokens.color.border.default}`,
+          boxShadow: `0 -8px 24px ${alpha(tokens.color.bg.default, 0.92)}`,
+        }}
+      >
+        <Box
+          sx={{
+            py: 1,
+            pl: `calc(12px + ${SAFE_X})`,
+            pr: `calc(12px + ${SAFE_X_R})`,
+            borderBottom: `1px solid ${tokens.color.border.default}`,
+          }}
+        >
+          <ScoringPad
+            ballValues={ballValues}
+            preset={preset}
+            playable={playable}
+            activePlayerName={activePlayer?.name}
+            onScore={handleScore}
+            onFoul={handleFoul}
+          />
+        </Box>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{
+            flexWrap: 'wrap',
+            alignItems: 'stretch',
+            py: 1,
+            pl: `calc(12px + ${SAFE_X})`,
+            pr: `calc(12px + ${SAFE_X_R})`,
+            m: 0,
+          }}
+        >
+          <Button
+            variant="outlined"
+            startIcon={<UndoOutlinedIcon />}
+            disabled={!playable}
+            onClick={onUndo}
+            aria-label="Undo last action"
+            sx={{ minHeight: 48, flex: { xs: '1 1 45%', sm: '0 0 auto' }, borderRadius: `${tokens.radius.md}px`, m: 0 }}
+          >
+            Undo
+          </Button>
           <Button
             variant="outlined"
             color="error"
             disabled={!playable}
             onClick={onEndMatchCancel}
-            sx={{ minHeight: 48, borderRadius: `${tokens.radius.md}px` }}
+            sx={{ minHeight: 48, flex: 1, borderRadius: `${tokens.radius.md}px`, m: 0 }}
           >
             Cancel match
           </Button>
@@ -522,14 +792,22 @@ export default function GameView({
             color="secondary"
             disabled={!playable}
             onClick={onEndMatchOpen}
-            sx={{ minHeight: 48, borderRadius: `${tokens.radius.md}px` }}
+            sx={{ minHeight: 48, flex: 1, borderRadius: `${tokens.radius.md}px`, m: 0 }}
           >
             End match
           </Button>
         </Stack>
-          </Stack>
-        </GlassPanel>
       </Box>
+
+      <AddPlayerToGameModal
+        open={addPlayerOpen}
+        state={state}
+        profiles={profiles ?? []}
+        profilesVersion={profilesVersion}
+        onClose={() => setAddPlayerOpen(false)}
+        onAdd={onAddPlayer}
+        onRemove={onRemovePlayer}
+      />
 
       <Dialog open={state.foulPickerOpen} onClose={onFoulClose} maxWidth="xs" fullWidth disableRestoreFocus>
         <DialogTitle sx={{ fontFamily: tokens.font.heading }}>Foul points</DialogTitle>
@@ -542,29 +820,72 @@ export default function GameView({
                 color="error"
                 autoFocus={idx === 0}
                 onClick={() => onFoulApply(pts)}
-                sx={{ minHeight: 44, fontSize: '1.1rem', fontWeight: 700 }}
+                sx={{ minHeight: 48, fontSize: '1.1rem', fontWeight: 700 }}
               >
                 {pts}
               </Button>
             ))}
           </Box>
         </DialogContent>
-        <DialogActions>
-          <Button onClick={onFoulClose} fullWidth variant="outlined">
+        <DialogActions sx={{ pb: SAFE_BOTTOM }}>
+          <Button onClick={onFoulClose} fullWidth variant="outlined" sx={{ minHeight: 48 }}>
             Cancel
           </Button>
         </DialogActions>
       </Dialog>
 
-      <Dialog open={state.endMatchPickerOpen} onClose={onEndMatchClose} fullWidth maxWidth="xs" disableRestoreFocus>
-        <DialogTitle sx={{ fontFamily: tokens.font.heading }}>End match</DialogTitle>
-        <DialogContent>
-          <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-            {multiPlayer
-              ? 'Lowest score loses. All other players win.'
-              : scoresTied
-                ? 'Scores are tied — match will end as a tie.'
-                : 'Winner is the player with the highest score.'}
+      <Dialog
+        open={state.endMatchPickerOpen}
+        onClose={onEndMatchClose}
+        fullWidth
+        maxWidth="sm"
+        scroll="paper"
+        disableRestoreFocus
+        PaperProps={{
+          sx: {
+            m: { xs: 1, sm: 2 },
+            width: { xs: 'calc(100% - 16px)', sm: '100%' },
+            maxHeight: {
+              xs: `calc(100dvh - 16px - ${SAFE_TOP} - ${SAFE_BOTTOM})`,
+              sm: 'min(90vh, 640px)',
+            },
+            display: 'flex',
+            flexDirection: 'column',
+          },
+        }}
+      >
+        <DialogTitle
+          sx={{
+            fontFamily: tokens.font.heading,
+            fontSize: isNarrow ? '1.1rem' : undefined,
+            py: isNarrow ? 1.25 : undefined,
+          }}
+        >
+          End match
+        </DialogTitle>
+        <DialogContent
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            px: { xs: 1.5, sm: 3 },
+            WebkitOverflowScrolling: 'touch',
+          }}
+        >
+          <Typography
+            variant="body2"
+            color="text.secondary"
+            sx={{ mb: 1.5, lineHeight: 1.5, wordBreak: 'break-word' }}
+          >
+            {frameMatch
+              ? scoresTied
+                ? 'Scores are tied — pick who won the frame or end the match as a tie.'
+                : 'Award this frame to the leader, or end the whole match.'
+              : multiPlayer
+                ? 'Lowest score loses. All other players win.'
+                : scoresTied
+                  ? 'Scores are tied — match will end as a tie.'
+                  : 'Winner is the player with the highest score.'}
           </Typography>
           <Stack spacing={1} sx={{ mb: 1 }}>
             {state.players.map((p, i) => {
@@ -597,23 +918,34 @@ export default function GameView({
                   }}
                 >
                   <PlayerAvatar player={p} size="sm" ring={isLeader || isWinner} />
-                  <Typography fontWeight={isLeader || isWinner || isLoser ? 700 : 500} sx={{ flex: 1 }}>
+                  <Typography
+                    fontWeight={isLeader || isWinner || isLoser ? 700 : 500}
+                    noWrap
+                    sx={{ flex: 1, minWidth: 0 }}
+                  >
                     {p.name}
                   </Typography>
-                  <Typography
-                    fontWeight={700}
-                    sx={{
-                      fontVariantNumeric: 'tabular-nums',
-                      fontFamily: tokens.font.mono,
-                      color: isLoser
-                        ? tokens.color.status.error
-                        : isWinner || isLeader
-                          ? tokens.color.baize.light
-                          : 'inherit',
-                    }}
-                  >
-                    {p.frameScore}
-                  </Typography>
+                  <Stack spacing={0.25} sx={{ alignItems: 'flex-end', flexShrink: 0 }}>
+                    <Typography
+                      fontWeight={700}
+                      sx={{
+                        fontVariantNumeric: 'tabular-nums',
+                        fontFamily: tokens.font.mono,
+                        color: isLoser
+                          ? tokens.color.status.error
+                          : isWinner || isLeader
+                            ? tokens.color.baize.light
+                            : 'inherit',
+                      }}
+                    >
+                      {p.frameScore}
+                    </Typography>
+                    {frameMatch && p.framesWon > 0 && (
+                      <Typography variant="caption" color="text.secondary">
+                        {p.framesWon} frame{p.framesWon === 1 ? '' : 's'} won
+                      </Typography>
+                    )}
+                  </Stack>
                   {(isLeader || isWinner) && (
                     <EmojiEventsOutlinedIcon sx={{ color: tokens.color.gold.main, fontSize: 20 }} />
                   )}
@@ -625,21 +957,55 @@ export default function GameView({
             })}
           </Stack>
         </DialogContent>
-        <DialogActions sx={{ flexDirection: 'column', alignItems: 'stretch', gap: 1, px: 2, pb: 2 }}>
+        <DialogActions
+          sx={{
+            flexDirection: 'column',
+            alignItems: 'stretch',
+            gap: 1,
+            px: { xs: 1.5, sm: 2 },
+            pt: 1,
+            pb: `calc(12px + ${SAFE_BOTTOM})`,
+            flexShrink: 0,
+          }}
+        >
+          {frameMatch && (
+            <Button
+              variant="contained"
+              fullWidth
+              autoFocus
+              disabled={scoresTied}
+              onClick={onNextFrame}
+              sx={{
+                minHeight: 48,
+                whiteSpace: 'normal',
+                lineHeight: 1.25,
+                py: 1.25,
+                fontSize: isNarrow ? '0.875rem' : undefined,
+              }}
+            >
+              {nextFrameLabel}
+            </Button>
+          )}
           <Button
             variant="contained"
             color="secondary"
             fullWidth
-            autoFocus
+            autoFocus={!frameMatch}
             onClick={onEndMatchByScore}
-            sx={{ minHeight: 48 }}
+            sx={{
+              minHeight: 48,
+              whiteSpace: 'normal',
+              lineHeight: 1.25,
+              py: 1.25,
+              fontSize: isNarrow ? '0.875rem' : undefined,
+            }}
           >
             {endMatchConfirmLabel}
           </Button>
-          <Button variant="outlined" color="error" fullWidth onClick={onEndMatchCancel} sx={{ minHeight: 44 }}>
+          <Button variant="outlined" color="error" fullWidth onClick={onEndMatchCancel} sx={{ minHeight: 48 }}>
             Cancel match
           </Button>
-          <Button onClick={onEndMatchClose} sx={{ color: 'text.secondary' }}>
+          <Button onClick={onEndMatchClose} sx={{ color: 'text.secondary', minHeight: 44 }}>
             Back
           </Button>
         </DialogActions>
@@ -655,6 +1021,11 @@ export default function GameView({
       )}
     </Box>
   );
+}
+
+function getNextFrameLabel({ scoresTied, scoreLeader }) {
+  if (scoresTied) return 'Next frame — scores tied';
+  return `Next frame — ${scoreLeader?.name ?? 'Player'} wins`;
 }
 
 function getEndMatchConfirmLabel({ scoresTied, multiPlayer, scoreLeader, multiLoserNames }) {

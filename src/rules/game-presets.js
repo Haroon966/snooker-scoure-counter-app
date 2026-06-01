@@ -88,8 +88,8 @@ export function getFoulOptions(preset) {
 }
 
 export function getScoringBallValues(preset) {
-  const base = [1, 2, 3, 4, 5, 6, 7];
-  return isTimedMode(preset) ? [...base, 10] : base;
+  // Timed: red (1) already scores 10 via getBallPoints — no separate +10 ball button
+  return [1, 2, 3, 4, 5, 6, 7];
 }
 
 export function isRaceMode(preset) {
@@ -102,6 +102,10 @@ export function isTimedMode(preset) {
 
 export function isSnookerTableMode(preset) {
   return preset.maxReds != null;
+}
+
+export function isFrameMatchMode(preset) {
+  return preset?.winType === 'frames';
 }
 
 export function getModeSummary(state) {
@@ -127,6 +131,10 @@ export function getModeSummary(state) {
 /** Modes available for the current setup selection. */
 export function getAvailableModes(setup) {
   const count = setup.selectedProfileIds.length;
+  // Team matches are always two-sided (Team A vs Team B), same modes as head-to-head.
+  if (setup.teamMode) {
+    return Object.values(GAME_MODES);
+  }
   return Object.values(GAME_MODES).filter((mode) => {
     if (count <= 2) return true;
     if (setup.multiPlayerFormat === 'tournament') return true;
