@@ -33,7 +33,7 @@ Push to `main`/`master` — GitHub Actions runs tests, builds `dist/`, and deplo
 
 Enable **Settings → Pages → Source: GitHub Actions** on the repository.
 
-The app is served at `/snooker-scoure-counter-app/` (`vite.config.js` `base`). The service worker cache version is set automatically at build time from `package.json` and the JS bundle hash.
+The app is served at `/snooker-scoure-counter-app/` (`vite.config.js` `base`). Deep links (e.g. `/history`) use `public/404.html` to redirect into the app on GitHub Pages reload; `index.html` restores the route before React loads. The service worker cache version is set automatically at build time from `package.json` and the JS bundle hash.
 
 ## Production notes
 

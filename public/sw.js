@@ -51,16 +51,20 @@ self.addEventListener('fetch', (event) => {
   const base = getBase();
 
   if (event.request.mode === 'navigate') {
+    const indexUrl = `${base}index.html`;
     event.respondWith(
       fetch(event.request)
-        .then((res) => {
+        .then(async (res) => {
           if (res.ok) {
             const clone = res.clone();
             caches.open(CACHE_NAME).then((c) => c.put(event.request, clone));
+            return res;
           }
+          const indexRes = await caches.match(indexUrl);
+          if (indexRes && res.status === 404) return indexRes;
           return res;
         })
-        .catch(async () => (await caches.match(`${base}index.html`)) || offlineResponse())
+        .catch(async () => (await caches.match(indexUrl)) || offlineResponse())
     );
     return;
   }

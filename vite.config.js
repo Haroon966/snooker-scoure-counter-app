@@ -8,8 +8,22 @@ const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const base = '/snooker-scoure-counter-app/';
 const baseNoSlash = base.replace(/\/$/, '');
 
-/** Redirect /snooker-scoure-counter-app → /snooker-scoure-counter-app/ in dev. */
+function isSpaRoute(url) {
+  const path = (url ?? '').split('?')[0];
+  if (!path.startsWith(baseNoSlash)) return false;
+  if (path === baseNoSlash || path === base || path === `${base}index.html`) return false;
+  if (path.includes('/assets/') || path.includes('/src/') || path.includes('@')) return false;
+  return !/\.[a-z0-9]+$/i.test(path.replace(/\/$/, '').split('/').pop() ?? '');
+}
+
+/** Redirect base path; SPA fallback for deep links in dev/preview. */
 function redirectBasePathPlugin() {
+  const spaFallback = (req, _res, next) => {
+    if (req.method !== 'GET' || !isSpaRoute(req.url)) return next();
+    req.url = `${base}index.html`;
+    next();
+  };
+
   return {
     name: 'redirect-base-path',
     configureServer(server) {
@@ -26,6 +40,10 @@ function redirectBasePathPlugin() {
         }
         next();
       });
+      server.middlewares.use(spaFallback);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(spaFallback);
     },
   };
 }
@@ -49,6 +67,7 @@ function injectPrecachePlugin() {
         `${base}index.html`,
         `${base}manifest.json`,
         `${base}logo.jpg`,
+        `${base}404.html`,
       ]);
 
       for (const match of indexHtml.matchAll(/\b(?:src|href)="([^"]+)"/g)) {
